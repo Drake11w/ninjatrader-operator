@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from mcp.server.mcpserver import MCPServer
 
 import journal
+import registry
 import report
 import rules
 import sessions
@@ -235,6 +236,36 @@ def validate_strategy_spec(spec: str) -> str:
     if errs:
         return json.dumps({"valid": False, "errors": errs}, indent=2)
     return json.dumps({"valid": True, "summary": strategy_spec.summarize(parsed)}, indent=2)
+
+
+@mcp.tool()
+def submit_strategy(spec: str, note: str = "") -> str:
+    """Register a candidate strategy spec (JSON text, schema v1). Validates first; always starts as 'candidate'.
+    An (id, version) pair is immutable: changes must be submitted as a new version. Records only, runs nothing."""
+    try:
+        parsed = json.loads(spec)
+    except ValueError as e:
+        return json.dumps({"ok": False, "errors": [f"not valid JSON: {e}"]})
+    return json.dumps(registry.submit(registry.connect(), parsed, note), indent=2)
+
+
+@mcp.tool()
+def set_strategy_status(id: str, version: str, status: str, note: str = "") -> str:
+    """Advance a registered strategy version one stage (candidate -> backtest -> sim -> live-small -> live), or mark it
+    rejected/retired (note required, terminal). Bookkeeping only: it does not enable anything in NinjaTrader."""
+    return json.dumps(registry.set_status(registry.connect(), id, version, status, note), indent=2)
+
+
+@mcp.tool()
+def list_submitted_strategies(id: str = "", status: str = "") -> str:
+    """List registered strategy spec versions with status and a short summary. Optionally filter by id or status."""
+    return json.dumps(registry.list_specs(registry.connect(), id, status), indent=2)
+
+
+@mcp.tool()
+def get_submitted_strategy(id: str, version: str) -> str:
+    """Full stored spec for one registered version, plus its status history."""
+    return json.dumps(registry.get_spec(registry.connect(), id, version), indent=2)
 
 
 @mcp.tool()
