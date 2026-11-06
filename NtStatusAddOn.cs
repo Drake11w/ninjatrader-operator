@@ -107,6 +107,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 else if (ctx.Request.Url.AbsolutePath == "/executions") body = BuildExecutions(QueryInt(ctx, "limit", 200));
                 else if (ctx.Request.Url.AbsolutePath == "/strategies") body = BuildStrategies();
                 else if (ctx.Request.Url.AbsolutePath == "/health") body = BuildHealth();
+                else if (ctx.Request.Url.AbsolutePath == "/backtest/job") body = BuildBacktestJob(QueryInt(ctx, "id", 0), ctx.Request.QueryString["trades"] == "1");
+                else if (ctx.Request.Url.AbsolutePath == "/debug/types") body = BuildTypes(ctx.Request.QueryString["filter"], ctx.Request.QueryString["members"] == "1");
                 else { code = 404; body = "{\"error\":\"not found\"}"; }
             }
             catch (Exception ex)
@@ -152,6 +154,45 @@ namespace NinjaTrader.NinjaScript.AddOns
             return null;
         }
 
+        // Read-only reflection listing (type full names, optionally members) from the NinjaTrader assemblies, to find out
+        // what a backtest entry point looks like. GET /debug/types?filter=Backtest&members=1
+        private static string BuildTypes(string filter, bool members)
+        {
+            if (string.IsNullOrEmpty(filter)) return Err("filter is required");
+            var sb = new StringBuilder("{\"types\":[");
+            bool first = true;
+            foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                string an = asm.GetName().Name;
+                if (an != "NinjaTrader.Gui" && an != "NinjaTrader.Core") continue;
+                Type[] types;
+                try { types = asm.GetTypes(); } catch (ReflectionTypeLoadException e) { types = e.Types.Where(t => t != null).ToArray(); }
+                foreach (Type t in types)
+                {
+                    if (t.FullName == null || t.FullName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    if (!first) sb.Append(","); first = false;
+                    sb.Append("{\"type\":" + Q(an + ": " + t.FullName + " : " + (t.BaseType == null ? "" : t.BaseType.Name)));
+                    if (members)
+                    {
+                        sb.Append(",\"members\":[");
+                        bool f2 = true;
+                        foreach (MemberInfo m in t.GetMembers(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                        {
+                            if (m.Name.StartsWith("get_") || m.Name.StartsWith("set_") || m.Name.StartsWith("add_") || m.Name.StartsWith("remove_") || m.MemberType == MemberTypes.NestedType) continue;
+                            string sig = m.MemberType + " " + m.Name; if (m is PropertyInfo) sig += " : " + ((PropertyInfo)m).PropertyType.FullName + (((PropertyInfo)m).CanWrite ? " rw" : " r"); if (m is EventInfo) sig += " : " + ((EventInfo)m).EventHandlerType.FullName;
+                            MethodBase mb = m as MethodBase;
+                            if (mb != null) sig += "(" + string.Join(",", mb.GetParameters().Select(pp => pp.ParameterType.FullName + " " + pp.Name)) + " -> " + (m is MethodInfo ? ((MethodInfo)m).ReturnType.Name : "") + ")";
+                            if (!f2) sb.Append(","); f2 = false;
+                            sb.Append(Q(sig));
+                        }
+                        sb.Append("]");
+                    }
+                    sb.Append("}");
+                }
+            }
+            return sb.Append("]}").ToString();
+        }
+
         private static string Err(string msg) { return "{\"ok\":false,\"error\":" + Q(msg) + "}"; }
 
         private string HandlePost(HttpListenerContext ctx, out int code)
@@ -163,6 +204,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             string path = ctx.Request.Url.AbsolutePath;
             if (path == "/killswitch/disarm") { DisarmKill(); return BuildKill(); }
+            if (path == "/backtest/run") return DoBacktestRun(ctx, out code);
 
             string name = ctx.Request.QueryString["account"];
             string instrument = ctx.Request.QueryString["instrument"];
@@ -373,6 +415,232 @@ namespace NinjaTrader.NinjaScript.AddOns
             }));
             if (error != null) { code = 500; return Err("disable failed: " + error); }
             return "{\"ok\":true,\"action\":\"strategy_disable\",\"account\":" + Q(a.Name) + ",\"name\":" + Q(name) + ",\"timestamp\":" + Ts(DateTime.UtcNow) + "}";
+        }
+
+        // ---- Backtests through an open Strategy Analyzer window (EXPERIMENTAL) -----------------------------------
+        // POST /backtest/run?class=OrbEvalMNQ&instrument=MNQ%2012-26&start=2020-01-02&end=2026-10-16&slippage=2&bar=1
+        //   body: "Property=urlencoded value" per line (the spec's ninjascript.inputs). Returns {job:id}; poll GET /backtest/job?id=N
+        //   (add &trades=1 for the trade list). One run at a time; needs the token when NT_OPERATOR_TOKEN is set.
+        // It does not create a window (doing so crashed the Analyzer's Run command): it finds the user's OPEN Strategy Analyzer
+        // through StrategyAnalyzerViewModel.Instances, switches the tab's strategy, sets inputs / instrument / dates / slippage and
+        // calls the view model's own OnRun on that window's dispatcher, then reads SystemPerformance.AllTrades from the new result row.
+        // Places no orders and touches no account. Use a specific contract (MNQ 12-26): NinjaTrader merges earlier contracts into it;
+        // the continuous MNQ ##-## gave empty results. Every recompile of this file closes the Analyzer window: reopen it.
+        // Pinned to NT 8.1.8.4 (TestedGuiVersion); relies on private members and may break on any NinjaTrader update.
+        private class BtJob
+        {
+            public int Id; public string State = "queued", Step = "start", Error, Cls, Instrument;
+            public string TradesJson = "[]", Info = ""; public int TradeCount; public double Net;
+            public DateTime Started = DateTime.UtcNow, Ended;
+        }
+        private class BtProgress : NinjaTrader.Core.IProgress
+        {
+            public bool IsAborted { get { return false; } }
+            public string Message { get; set; }
+            public event EventHandler Aborted { add { } remove { } }
+            public long Max, Steps;
+            public void PerformStep() { Steps++; }
+            public void SetUp(long maxSteps, bool isAbortable) { Max = maxSteps; }
+            public void TearDown() { }
+        }
+        private static readonly Dictionary<int, BtJob> btJobs = new Dictionary<int, BtJob>();
+        private static int btNext = 1;
+
+        private string DoBacktestRun(HttpListenerContext ctx, out int code)
+        {
+            code = 200;
+            string cls = ctx.Request.QueryString["class"], instrument = ctx.Request.QueryString["instrument"];
+            string sStart = ctx.Request.QueryString["start"], sEnd = ctx.Request.QueryString["end"];
+            if (string.IsNullOrEmpty(cls) || string.IsNullOrEmpty(instrument) || string.IsNullOrEmpty(sStart) || string.IsNullOrEmpty(sEnd))
+            { code = 400; return Err("class, instrument, start, end are required"); }
+            DateTime start, end;
+            if (!DateTime.TryParse(sStart, CultureInfo.InvariantCulture, DateTimeStyles.None, out start) || !DateTime.TryParse(sEnd, CultureInfo.InvariantCulture, DateTimeStyles.None, out end))
+            { code = 400; return Err("start/end must be yyyy-mm-dd"); }
+            double slippage = 0; double.TryParse(ctx.Request.QueryString["slippage"] ?? "0", NumberStyles.Float, CultureInfo.InvariantCulture, out slippage);
+            int bar = 1; int.TryParse(ctx.Request.QueryString["bar"] ?? "1", out bar);
+            string commission = ctx.Request.QueryString["commission_template"] ?? "";
+            var inputs = new Dictionary<string, string>();
+            using (var rd = new StreamReader(ctx.Request.InputStream, Encoding.UTF8))
+            {
+                string line;
+                while ((line = rd.ReadLine()) != null)
+                {
+                    int eq = line.IndexOf('='); if (eq <= 0) continue;
+                    inputs[line.Substring(0, eq).Trim()] = Uri.UnescapeDataString(line.Substring(eq + 1).Trim());
+                }
+            }
+            Type type = AppDomain.CurrentDomain.GetAssemblies().Select(x => { try { return x.GetType("NinjaTrader.NinjaScript.Strategies." + cls, false); } catch { return null; } }).FirstOrDefault(t => t != null);
+            if (type == null) { code = 404; return Err("strategy class '" + cls + "' not found (compiled?)"); }
+            BtJob job;
+            lock (btJobs)
+            {
+                if (btJobs.Values.Any(j => j.State == "queued" || j.State == "running")) { code = 409; return Err("a backtest is already running"); }
+                job = new BtJob { Id = btNext++, Cls = cls, Instrument = instrument };
+                btJobs[job.Id] = job;
+            }
+            System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() => RunBacktestJob(job, type, inputs, instrument, start, end, slippage, bar, commission)));
+            return "{\"ok\":true,\"job\":" + job.Id + "}";
+        }
+
+        private static void RunBacktestJob(BtJob job, Type type, Dictionary<string, string> inputs, string instrument, DateTime start, DateTime end, double slippage, int bar, string commission)
+        {
+            try
+            {
+                job.State = "running";
+                job.Step = "find_window";
+                Assembly gui = AppDomain.CurrentDomain.GetAssemblies().First(x => x.GetName().Name == "NinjaTrader.Gui");
+                if (gui.GetName().Version.ToString() != TestedGuiVersion) throw new Exception("NinjaTrader.Gui is " + gui.GetName().Version + "; only checked against " + TestedGuiVersion);
+                Type vmT = gui.GetType("NinjaTrader.Gui.NinjaScript.StrategyAnalyzer.StrategyAnalyzerViewModel", true);
+                PropertyInfo instP = vmT.GetProperty("Instances", BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object vm = null; System.Windows.Threading.Dispatcher od = null; int seen = 0;
+                foreach (object cand in (System.Collections.IEnumerable)instP.GetValue(null, null))
+                {
+                    seen++;
+                    var owner = vmT.GetProperty("Owner").GetValue(cand, null) as System.Windows.Threading.DispatcherObject;
+                    if (owner == null) continue;
+                    vm = cand; od = owner.Dispatcher;
+                }
+                job.Info = "analyzer instances=" + seen;
+                if (vm == null) throw new Exception("no Strategy Analyzer window is open (instances: " + seen + "): open one (New > Strategy Analyzer) first");
+                if (!od.CheckAccess()) { od.Invoke(new Action(() => RunOnOwner(job, type, inputs, instrument, start, end, slippage, bar, commission, vm, od))); return; }
+                RunOnOwner(job, type, inputs, instrument, start, end, slippage, bar, commission, vm, od);
+                return;
+            }
+            catch (Exception ex)
+            {
+                Exception e = ex.InnerException ?? ex;
+                job.Error = "at step " + job.Step + ": " + e.GetType().Name + ": " + e.Message;
+                job.State = "failed"; job.Ended = DateTime.UtcNow;
+            }
+        }
+
+        private static void RunOnOwner(BtJob job, Type type, Dictionary<string, string> inputs, string instrument, DateTime start, DateTime end, double slippage, int bar, string commission, object vm, System.Windows.Threading.Dispatcher od)
+        {
+            try
+            {
+                object tab = vm.GetType().GetProperty("SelectedTab").GetValue(vm, null);
+                if (tab == null) throw new Exception("the Analyzer window has no selected tab");
+                object tp = tab.GetType().GetProperty("TabStrategyProperties").GetValue(tab, null);
+                Type tpt = tp.GetType();
+                job.Step = "select_strategy";
+                PropertyInfo tmplP = tpt.GetProperty("StrategyTemplate");
+                object tmpl = tmplP.GetValue(tp, null);
+                job.Info = "template0=" + (tmpl == null ? "null" : tmpl.GetType().Name) + " strategyProp=" + tpt.GetProperty("Strategy").GetValue(tp, null);
+                {
+                    // always switch away and back so the Analyzer runs its own strategy-changed setup (a tab that already showed this
+                    // strategy silently ignored Run)
+                    if (tmpl != null && tmpl.GetType().Name == type.Name) tpt.GetProperty("Strategy").SetValue(tp, "buyandhold", null);
+                    tpt.GetProperty("Strategy").SetValue(tp, type.Name, null);
+                    tmpl = tmplP.GetValue(tp, null);
+                    job.Info += " | after set: template=" + (tmpl == null ? "null" : tmpl.GetType().Name);
+                }
+                var st = tmpl as StrategyBase;
+                if (st == null || st.GetType().Name != type.Name) throw new Exception("could not select " + type.Name + " in the Analyzer tab");
+                type = st.GetType();
+                job.Step = "set_inputs";
+                foreach (var kv in inputs)
+                {
+                    PropertyInfo pi = type.GetProperty(kv.Key, BindingFlags.Public | BindingFlags.Instance);
+                    if (pi == null || !pi.CanWrite) throw new Exception("unknown or read-only input '" + kv.Key + "' on " + type.Name);
+                    pi.SetValue(st, ConvertTo(pi.PropertyType, kv.Value), null);
+                }
+                {
+                    var bad = new List<string>();
+                    foreach (var kv in inputs)
+                    {
+                        object cur = type.GetProperty(kv.Key).GetValue(st, null);
+                        object want = ConvertTo(type.GetProperty(kv.Key).PropertyType, kv.Value);
+                        if (!object.Equals(cur, want)) bad.Add(kv.Key + " wanted " + want + " got " + cur);
+                    }
+                    job.Info += " | inputs applied " + (inputs.Count - bad.Count) + "/" + inputs.Count + (bad.Count > 0 ? " MISMATCH: " + string.Join("; ", bad.ToArray()) : "");
+                }
+                job.Step = "set_settings";
+                tpt.GetProperty("InstrumentOrInstrumentList").SetValue(tp, instrument, null);   // exactly what the first working run did
+                st.From = start.Date; st.To = end.Date;
+                st.Slippage = slippage;
+                st.IncludeTradeHistoryInBacktest = true;
+                if (!string.IsNullOrEmpty(commission)) { st.IncludeCommission = true; st.BacktestCommissionTemplate = commission; }
+                job.Info += " | instr tab=" + tpt.GetProperty("InstrumentOrInstrumentList").GetValue(tp, null) + " tmpl=" + st.InstrumentOrInstrumentList + " from=" + st.From.ToString("yyyy-MM-dd") + " to=" + st.To.ToString("yyyy-MM-dd") + " slip=" + st.Slippage;
+                BarsPeriod bp = (BarsPeriod)tpt.GetProperty("BarsPeriod").GetValue(tp, null);
+                bp.BarsPeriodType = BarsPeriodType.Minute; bp.Value = bar;
+                PropertyInfo resP = tab.GetType().GetProperty("Results");
+                int before = ((System.Collections.IEnumerable)resP.GetValue(tab, null)).Cast<object>().Count();
+                Func<object, string> rowId = r => { var g = r.GetType().GetProperty("Guid"); return g == null ? "" : Convert.ToString(g.GetValue(r, null)); };
+                string lastBefore = before == 0 ? "" : rowId(((System.Collections.IEnumerable)resP.GetValue(tab, null)).Cast<object>().Last());
+                job.Step = "on_run";
+                vm.GetType().GetMethod("OnRun", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Invoke(vm, new object[] { null, null });
+                job.Step = "waiting_for_result";
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try
+                    {
+                        DateTime t0 = DateTime.UtcNow; int after = before; bool finished = false; string note = ""; int quiet = 0; bool seenProgress = false;
+                        while ((DateTime.UtcNow - t0).TotalMinutes < 40 && !finished)
+                        {
+                            Thread.Sleep(2000);
+                            if (after <= before && (DateTime.UtcNow - t0).TotalSeconds > 90) break;
+                            od.Invoke(new Action(() =>
+                            {
+                                after = ((System.Collections.IEnumerable)resP.GetValue(tab, null)).Cast<object>().Count();
+                                object entry = after == 0 ? null : ((System.Collections.IEnumerable)resP.GetValue(tab, null)).Cast<object>().Last();
+                                if (entry == null || (after <= before && rowId(entry) == lastBefore)) return;
+                                after = Math.Max(after, before + 1);
+                                Type et = entry.GetType();
+                                TimeSpan dur = (TimeSpan)et.GetProperty("Duration").GetValue(entry, null);
+                                var perf = et.GetProperty("Results").GetValue(entry, null) as NinjaTrader.Cbi.SystemPerformance;
+                                int nTr = perf == null ? -1 : perf.AllTrades.Count;
+                                note = "duration=" + dur + " trades=" + nTr;
+                                bool progress = (bool)tab.GetType().GetProperty("IsProgressVisible").GetValue(tab, null);
+                                note += " progress=" + progress;
+                                if (progress) { seenProgress = true; quiet = 0; return; }
+                                if (!seenProgress && (DateTime.UtcNow - t0).TotalSeconds < 30) return;
+                                if (++quiet < 3) return;   // not running for 3 polls in a row
+                                finished = true;
+                                var sb = new StringBuilder("[");
+                                int n = 0; double net = 0;
+                                foreach (NinjaTrader.Cbi.Trade t in perf.AllTrades)
+                                {
+                                    if (n > 0) sb.Append(",");
+                                    sb.Append("{\"entry_time\":" + Q(t.Entry.Time.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture))
+                                        + ",\"exit_time\":" + Q(t.Exit.Time.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture))
+                                        + ",\"side\":" + Q(t.Entry.MarketPosition.ToString()) + ",\"qty\":" + t.Quantity
+                                        + ",\"entry_price\":" + t.Entry.Price.ToString("R", CultureInfo.InvariantCulture)
+                                        + ",\"exit_price\":" + t.Exit.Price.ToString("R", CultureInfo.InvariantCulture)
+                                        + ",\"entry_name\":" + Q(t.Entry.Name ?? "") + ",\"exit_name\":" + Q(t.Exit.Name ?? "")
+                                        + ",\"profit\":" + t.ProfitCurrency.ToString("R", CultureInfo.InvariantCulture)
+                                        + ",\"commission\":" + t.Commission.ToString("R", CultureInfo.InvariantCulture) + "}");
+                                    net += t.ProfitCurrency; n++;
+                                }
+                                sb.Append("]");
+                                job.TradesJson = sb.ToString(); job.TradeCount = n; job.Net = net;
+                            }));
+                        }
+                        job.Info += " | results " + before + "->" + after + " " + note;
+                        job.State = finished ? "done" : "failed"; job.Step = "done"; job.Ended = DateTime.UtcNow;
+                        if (!finished) job.Error = after <= before ? "Run did nothing: no result row appeared within 90 s" : "run did not finish in 40 minutes (" + note + ")";
+                    }
+                    catch (Exception ex) { job.Error = "poll: " + ex.Message; job.State = "failed"; job.Ended = DateTime.UtcNow; }
+                });
+            }
+            catch (Exception ex)
+            {
+                Exception e = ex.InnerException ?? ex;
+                string where = e.StackTrace == null ? "" : e.StackTrace.Split((char)10)[0].Trim();
+                job.Error = "at step " + job.Step + ": " + e.GetType().Name + ": " + e.Message + " | " + where;
+                job.State = "failed"; job.Ended = DateTime.UtcNow;
+            }
+        }
+
+        private static string BuildBacktestJob(int id, bool withTrades)
+        {
+            BtJob j;
+            lock (btJobs) { if (!btJobs.TryGetValue(id, out j)) return Err("no such job"); }
+            string s = "{\"ok\":true,\"job\":" + j.Id + ",\"state\":" + Q(j.State) + ",\"step\":" + Q(j.Step) + ",\"class\":" + Q(j.Cls)
+                + ",\"error\":" + (j.Error == null ? "null" : Q(j.Error)) + ",\"info\":" + Q(j.Info) + ",\"trade_count\":" + j.TradeCount
+                + ",\"net\":" + j.Net.ToString("R", CultureInfo.InvariantCulture)
+                + ",\"seconds\":" + (((j.Ended == default(DateTime) ? DateTime.UtcNow : j.Ended) - j.Started).TotalSeconds).ToString("F0", CultureInfo.InvariantCulture);
+            if (withTrades) s += ",\"trades\":" + j.TradesJson;
+            return s + "}";
         }
 
         private static bool Matches(Instrument i, string filter)

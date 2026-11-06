@@ -23,6 +23,15 @@ CREATE TABLE IF NOT EXISTS specs (
     submitted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     PRIMARY KEY (id, version)
 );
+CREATE TABLE IF NOT EXISTS approvals (
+    id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    approved INTEGER NOT NULL,
+    limits TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    PRIMARY KEY (id, version)
+);
 CREATE TABLE IF NOT EXISTS status_history (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL,
@@ -127,3 +136,18 @@ def get_spec(con: sqlite3.Connection, sid: str, version: str) -> dict:
         (sid, version))]
     return {"id": sid, "version": version, "status": row["status"], "spec": json.loads(row["spec_json"]),
             "history": hist}
+
+
+def record_approval(con: sqlite3.Connection, sid: str, version: str, approved: bool, limits: str = "",
+                    source: str = "") -> None:
+    """Remember the handoff bundle's approval (MANIFEST.approval) for a spec version; the first record is kept."""
+    con.execute("INSERT OR IGNORE INTO approvals (id, version, approved, limits, source) VALUES (?,?,?,?,?)",
+                (sid, version, int(bool(approved)), limits or "", source))
+    con.commit()
+
+
+def get_approval(con: sqlite3.Connection, sid: str, version: str):
+    r = con.execute("SELECT approved, limits, source, recorded_at FROM approvals WHERE id=? AND version=?",
+                    (sid, version)).fetchone()
+    return {"approved": bool(r["approved"]), "limits": r["limits"], "source": r["source"],
+            "recorded_at": r["recorded_at"]} if r else None

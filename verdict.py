@@ -15,6 +15,9 @@ import json
 import math
 from datetime import datetime, timezone
 
+import backtest
+import journal
+import registry
 import trades as trades_mod
 
 DEFAULT_CRITERIA = {
@@ -253,3 +256,35 @@ def sim_start(con, spec_id: str, version: str) -> str:
     r = con.execute("SELECT at FROM status_history WHERE id=? AND version=? AND to_status='sim'"
                     " ORDER BY seq DESC LIMIT 1", (spec_id, version)).fetchone()
     return r["at"] if r else ""
+
+
+def evaluate_registered(rcon, jcon, sid: str, version: str, account: str = "", criteria: dict = None,
+                        since: str = "") -> dict:
+    """Load a registered spec, its latest backtest and its journaled trades, then evaluate. Returns the verdict dict
+    plus `trades` (this spec version's trades since activation) and `backtest` (latest run's metrics, or {}).
+    Returns {"error": ...} for an unknown spec."""
+    row = registry.get_spec(rcon, sid, version)
+    if "error" in row:
+        return row
+    runs = backtest.list_runs(rcon, sid, version)
+    bt, full, ref_pnls = {}, {}, []
+    if runs:
+        full = backtest.get_run(rcon, runs[0]["run_id"])
+        bt = json.loads(full["metrics_json"])
+        if full.get("trades_json"):
+            ref_pnls = [x.get("net_pnl", x.get("profit")) for x in json.loads(full["trades_json"])]
+            ref_pnls = [x for x in ref_pnls if isinstance(x, (int, float))]
+    start = since or sim_start(rcon, sid, version)
+    rows = [r for r in journal.query(jcon, account, sid, "", 5000) if r.get("strategy_version") in ("", version)]
+    built = trades_mod.build_trades(rows)
+    mine = [t for t in built["trades"] if t.get("strategy_version") in ("", version)]
+    out = evaluate(row["spec"], mine, bt, criteria, start, row["spec"].get("timezone", "America/Chicago"), ref_pnls)
+    out.update(id=sid, version=version, status=row["status"], since=start,
+               next_step=action_for(out["verdict"], row["status"]))
+    if row["status"] not in ("sim", "live-small", "live"):
+        out["warnings"].append(f"status is '{row['status']}': it is not trading, so there are few or no trades to judge")
+    out["warnings"] += built["warnings"]
+    cut = trades_mod._parse(start) if start else None
+    out["trades"] = [t for t in mine if cut is None or trades_mod._parse(t["exit_time"]) >= cut]
+    out["backtest"] = dict(bt, run_id=full.get("run_id"), label=full.get("label")) if runs else {}
+    return out

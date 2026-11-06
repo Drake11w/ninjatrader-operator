@@ -189,6 +189,9 @@ def install_bundle(path: str, apply: bool = False, nt_dir: str = "", today: date
     con = registry.connect()
     try:
         reg = registry.submit(con, spec, "installed from handoff bundle " + os.path.abspath(path))
+        appr = r["manifest"].get("approval") or {}
+        registry.record_approval(con, spec["id"], spec["version"], appr.get("handoff_approved"),
+                                 appr.get("limits", ""), os.path.abspath(path))
     finally:
         con.close()
     already = (not reg["ok"]) and any("already registered" in e for e in reg.get("errors", []))

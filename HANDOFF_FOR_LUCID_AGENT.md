@@ -82,6 +82,11 @@ file in NinjaTrader's Strategy Analyzer with the **same inputs, costs and date r
 2. **Periods grid with Period = Day** (needs `Period`, `Net profit`).
 3. **Backtests list grid** (one summary row per run: net profit and trade count only).
 
+The operator can run the backtests itself from a bundle (`python backtest_runner.py <bundle dir> --import`), on the
+current front-month contract (`MNQ 12-26`; NinjaTrader merges earlier contracts, history back to 2019) with the spec's
+`ninjascript.inputs`, slippage and commission. A bundle therefore only needs the exact inputs; you do not have to attach CSVs.
+Do not use the continuous `MNQ ##-##` instrument in the Strategy Analyzer: it returned empty results.
+
 If you cannot run NinjaTrader from the repo, do not fabricate CSVs. Instead produce the spec and `NOTES.md` and
 list in the final report "Strategy Analyzer run needed: <class>, inputs, date range, costs". Record the export
 time zone (`export_timezone`, the PC/chart time zone; the house assumption is Central) in `MANIFEST.json`.
