@@ -412,41 +412,19 @@ def evaluate_strategy(id: str, version: str, account: str = "", criteria: str = 
         crit = json.loads(criteria) if criteria else None
     except ValueError:
         return json.dumps({"error": "criteria must be valid JSON"})
-    rcon = registry.connect()
+    rcon, jcon = registry.connect(), journal.connect()
     try:
-        row = registry.get_spec(rcon, id, version)
-        if "error" in row:
-            return json.dumps(row)
-        runs = backtest.list_runs(rcon, id, version)
-        bt = {}
-        if runs:
-            full = backtest.get_run(rcon, runs[0]["run_id"])
-            bt = json.loads(full["metrics_json"])
-        start = since or verdict.sim_start(rcon, id, version)
-        jcon = journal.connect()
-        try:
-            rows = journal.query(jcon, account, id, "", 5000)
-        finally:
-            jcon.close()
-        rows = [r for r in rows if r.get("strategy_version") in ("", version)]
-        built = trades.build_trades(rows)
-        mine = [t for t in built["trades"] if t.get("strategy_version") in ("", version)]
-        ref_pnls = []
-        if runs and full.get("trades_json"):
-            ref_pnls = [x.get("net_pnl", x.get("profit")) for x in json.loads(full["trades_json"])]
-            ref_pnls = [x for x in ref_pnls if isinstance(x, (int, float))]
-        out = verdict.evaluate(row["spec"], mine, bt, crit, start,
-                               row["spec"].get("timezone", "America/Chicago"), ref_pnls)
-        out.update(id=id, version=version, status=row["status"], since=start,
-                   next_step=verdict.action_for(out["verdict"], row["status"]))
-        if row["status"] not in ("sim", "live-small", "live"):
-            out["warnings"].append(f"status is '{row['status']}': it is not trading, so there are few or no trades to judge")
-        out["warnings"] += built["warnings"]
+        out = verdict.evaluate_registered(rcon, jcon, id, version, account, crit, since)
+        if "error" in out:
+            return json.dumps(out)
+        out.pop("trades", None)
+        out.pop("backtest", None)
         if record:
-            out["verdict_id"] = verdict.record(rcon, id, version, row["status"], out)
+            out["verdict_id"] = verdict.record(rcon, id, version, out["status"], out)
         return json.dumps(out, indent=2)
     finally:
         rcon.close()
+        jcon.close()
 
 
 @mcp.tool()

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>NinjaTrader operator</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0f1318;--card:#171d25;--line:#263041;--tx:#d8dee9;--mu:#8793a5;--ok:#3fb27f;--warn:#e0a93b;--bad:#e05d5d;--blue:#5b9bf0}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,Segoe UI,sans-serif}
+header{display:flex;gap:16px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+h1{font-size:16px;margin:0;flex:1}h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu);margin:26px 0 10px}
+main{padding:0 20px 60px;max-width:1280px;margin:auto}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;border:1px solid var(--line);color:var(--mu);white-space:nowrap}
+.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.warn{color:var(--warn);border-color:var(--warn)}.pill.bad{color:var(--bad);border-color:var(--bad)}.pill.blue{color:var(--blue);border-color:var(--blue)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.k{color:var(--mu);font-size:12px}.v{font-size:22px;font-weight:600;margin-top:2px}.sub{color:var(--mu);font-size:12px}
+.pos{color:var(--ok)}.neg{color:var(--bad)}
+.strat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.top b{font-size:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:12px;margin:14px 0}
+.grid .v{font-size:17px}
+.cols{display:grid;grid-template-columns:2fr 3fr;gap:18px}@media(max-width:900px){.cols{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line)}th{color:var(--mu);font-weight:500}
+details{margin-top:10px}summary{cursor:pointer;color:var(--mu)}
+.bar{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}.bar i{display:block;height:100%;background:var(--blue)}
+.reasons{margin:8px 0 0;padding-left:18px;color:var(--mu)}.err{background:#3a1d1d;border:1px solid var(--bad);padding:10px;border-radius:8px;margin:14px 0}
+svg{width:100%;height:120px;display:block}
+.hyp{color:var(--mu);font-size:12.5px;margin-top:8px}
+</style></head><body>
+<header><h1>NinjaTrader operator</h1><span id="nt" class="pill">…</span><span class="sub" id="stamp"></span>
+<button id="rf" style="background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer">Refresh</button></header>
+<main><div id="err"></div><div id="root">Loading…</div></main>
+<script>
+const $=s=>document.querySelector(s);
+const money=x=>x==null?'–':(x<0?'-':'')+'$'+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const cls=x=>x>0?'pos':x<0?'neg':'';
+const pct=x=>x==null?'–':Math.round(x*100)+'%';
+const num=(x,d=2)=>x==null?'–':Number(x).toFixed(d);
+function dur(s){if(s==null)return '–';const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`}
+function ago(ts){if(!ts)return '–';return dur((Date.now()-new Date(ts))/1000)+' ago'}
+function when(ts){return ts?new Date(ts).toLocaleString():'–'}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const STAGE={candidate:'',backtest:'blue',sim:'ok','live-small':'warn',live:'warn',rejected:'bad',retired:'bad'};
+const VER={promote:['ok','PROMOTE'],keep_testing:['blue','KEEP TESTING'],reject:['bad','REJECT / DISABLE']};
+function spark(eq){
+  if(!eq.length)return '<div class="sub" style="padding:40px 0;text-align:center">No closed trades since activation</div>';
+  const pts=[[0,0],...eq.map((e,i)=>[i+1,e[1]])],W=600,H=120,p=8;
+  const ys=pts.map(a=>a[1]),mn=Math.min(0,...ys),mx=Math.max(0,...ys),r=(mx-mn)||1;
+  const X=i=>p+i/(Math.max(pts.length-1,1))*(W-2*p),Y=v=>H-p-(v-mn)/r*(H-2*p);
+  const d=pts.map((a,i)=>(i?'L':'M')+X(a[0]).toFixed(1)+' '+Y(a[1]).toFixed(1)).join('');
+  const c=ys[ys.length-1]>=0?'#3fb27f':'#e05d5d';
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line x1="0" x2="${W}" y1="${Y(0)}" y2="${Y(0)}" stroke="#263041" stroke-dasharray="4"/><path d="${d}" fill="none" stroke="${c}" stroke-width="2"/></svg><div class="sub">Cumulative net P&L by day since activation (${eq[0][0]} → ${eq[eq.length-1][0]})</div>`;
+}
+function stat(k,v,sub,c){return `<div><div class="k">${k}</div><div class="v ${c||''}">${v}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`}
+function strat(s){
+  const p=s.performance,v=s.verdict,bt=s.backtest,vv=VER[v.verdict]||['',''],a=s.approval;
+  const apprPill=a?(a.approved?`<span class="pill ok" title="${esc(a.limits)}">Handoff approved</span>`:'<span class="pill bad">Handoff NOT approved</span>'):'<span class="pill" title="Re-run install_handoff (apply) on the bundle to record it">Approval not recorded</span>';
+  const run=s.running?`<span class="pill ok">Running ${dur(s.running_seconds)}</span>`:`<span class="pill">Not active</span>`;
+  const nt=s.nt_running?'<span class="pill ok">Live in NT</span>':(s.running?'<span class="pill warn">Not seen in NT</span>':'');
+  const minT=(v.criteria||{}).min_trades||30,prog=Math.min(100,(p.trades||0)/minT*100);
+  const cmp=(label,actual,ref)=>`<tr><td>${label}</td><td>${actual}</td><td>${ref}</td></tr>`;
+  const ex=(v.expected||{});
+  const refTbl=`<table><tr><th></th><th>Sim (since activation)</th><th>Backtest / claim</th></tr>
+    ${cmp('Expectancy / trade',money(p.expectancy),ex.expectancy?money(ex.expectancy.value)+' <span class=sub>'+ex.expectancy.source+'</span>':'–')}
+    ${cmp('Win rate',pct(p.win_rate),ex.win_rate?pct(ex.win_rate.value)+' <span class=sub>'+ex.win_rate.source+'</span>':'–')}
+    ${cmp('Profit factor',num(p.profit_factor),ex.profit_factor?num(ex.profit_factor.value):'–')}
+    ${cmp('Max drawdown',money(p.max_drawdown),bt&&bt.max_drawdown!=null?money(bt.max_drawdown):'–')}
+    ${cmp('Trades / year',p.trading_days>5?num(p.trades/p.trading_days*252,0):'–',ex.trades_per_year?num(ex.trades_per_year.value,0):'–')}</table>`;
+  const legs=s.legs.map(l=>`<tr><td>${esc(l.name)}</td><td>${esc(l.side||'')} ${l.contracts?'×'+l.contracts:''}</td><td>${l.session?esc(l.session.entry_start+'–'+l.session.flat_by):''} ${l.days?esc(l.days.join(',')):''}</td>
+    <td>${l.nt?esc(l.nt.state)+(l.nt.quantity?` · ${esc(l.nt.position)} ${l.nt.quantity}`:' · flat'):'<span class=sub>not in NT</span>'}</td><td>${l.trades}</td><td class="${cls(l.net_pnl)}">${money(l.net_pnl)}</td></tr>`).join('');
+  const checks=(v.checks||[]).map(c=>`<tr><td>${esc(c.check)}</td><td><span class="pill ${c.status=='pass'?'ok':c.status=='fail'?'bad':c.status=='warn'?'warn':''}">${esc(c.status)}</span></td><td>${esc(c.actual)}</td><td>${esc(c.threshold)}</td><td class=sub>${esc(c.note)}</td></tr>`).join('');
+  const hist=(s.stage_history||[]).map(h=>`<tr><td>${when(h.at)}</td><td>${esc(h.from_status||'–')} → ${esc(h.to_status)}</td><td class=sub>${esc(h.note)}</td></tr>`).join('');
+  const rec=(s.recorded_verdicts||[]).map(h=>`<tr><td>${when(h.at)}</td><td>${esc(h.status)}</td><td>${esc(h.verdict)}</td><td>${h.trades}</td><td>${money(h.net_pnl)}</td></tr>`).join('');
+  return `<div class="strat"><div class="top"><b>${esc(s.lucid_id||s.id)} <span class=sub>${esc(s.id)} v${esc(s.version)}</span></b>
+    <span class="pill ${STAGE[s.status]}">${esc(s.status)}</span>${apprPill}${run}${nt}
+    <span class="pill ${vv[0]}" style="margin-left:auto">${vv[1]}${v.edge_decayed?' · EDGE DECAYED':''}</span></div>
+    <div class="hyp">${esc(s.name)} · ${esc(s.instrument||'')} · stage since ${when(s.status_since)}${s.activated_at?` · activated ${when(s.activated_at)}`:''}</div>
+    <div class="grid">
+      ${stat('Net P&L since activation',money(p.net_pnl||0),(p.trades||0)+' closed trades',cls(p.net_pnl))}
+      ${stat('Today',money(s.pnl_today),'',cls(s.pnl_today))}
+      ${stat('Win rate',pct(p.win_rate),'avg win '+money(p.avg_win)+' / loss '+money(p.avg_loss))}
+      ${stat('Expectancy',money(p.expectancy),'profit factor '+num(p.profit_factor),cls(p.expectancy))}
+      ${stat('Max drawdown',money(p.max_drawdown),'best day '+money(p.best_day)+' · worst '+money(p.worst_day))}
+      ${stat('Last trade',ago(s.last_trade),p.trading_days?p.trading_days+' trading days':'')}
+    </div>
+    <div class="cols"><div>${spark(s.equity)}<div class="sub" style="margin-top:8px">Sample: ${p.trades||0}/${minT} trades toward promotion</div><div class="bar"><i style="width:${prog}%"></i></div>${v.eta?`<div class="sub">${esc(v.eta)}</div>`:''}</div>
+    <div>${refTbl}</div></div>
+    <ul class="reasons">${(v.reasons||[]).map(r=>`<li>${esc(r)}</li>`).join('')}</ul>
+    <div class="sub" style="margin-top:6px">Next step: ${esc(v.next_step||'')}</div>
+    <details open><summary>Legs</summary><table><tr><th>Leg</th><th>Side</th><th>Session (CT)</th><th>NinjaTrader</th><th>Trades</th><th>Net P&L</th></tr>${legs}</table></details>
+    <details><summary>Verdict checks (${(v.checks||[]).length})</summary><table><tr><th>Check</th><th>Status</th><th>Actual</th><th>Threshold</th><th></th></tr>${checks}</table>
+      ${(v.warnings||[]).length?`<ul class=reasons>${v.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>`:''}</details>
+    ${bt?`<details><summary>Backtest reference</summary><div class=sub>Run ${bt.run_id} ${esc(bt.label||'')} · ${esc(bt.start||'')} → ${esc(bt.end||'')} · net/yr ${money(bt.net_per_year)} · trades/yr ${num(bt.trades_per_year,0)} · net ${money(bt.net_pnl)} on ${bt.trades??'–'} trades</div></details>`:'<details><summary>Backtest reference</summary><div class=sub>No backtest imported: decay detection is off for this strategy (import_backtest).</div></details>'}
+    <details><summary>Stage history &amp; verdict log</summary><table><tr><th>When</th><th>Change</th><th>Note</th></tr>${hist}</table>
+      ${rec?`<table style="margin-top:8px"><tr><th>Recorded</th><th>Stage</th><th>Verdict</th><th>Trades</th><th>Net</th></tr>${rec}</table>`:''}</details>
+    ${s.hypothesis?`<details><summary>Hypothesis</summary><div class=hyp>${esc(s.hypothesis)}</div></details>`:''}</div>`;
+}
+function render(d){
+  const sm=d.summary,nt=d.nt;
+  $('#nt').className='pill '+(nt.reachable?'ok':'bad');$('#nt').textContent=nt.reachable?'NinjaTrader connected':'NinjaTrader unreachable';
+  $('#stamp').textContent='Updated '+new Date(d.generated_at).toLocaleTimeString()+(d.journal_synced_new_fills?` · ${d.journal_synced_new_fills} new fills`:'');
+  const stages=Object.entries(sm.by_stage).filter(([k,v])=>v).map(([k,v])=>`<span class="pill ${STAGE[k]}">${v} ${k}</span>`).join(' ');
+  let h=`<h2>Overview</h2><div class="cards">
+   <div class="card"><div class="k">Strategies</div><div class="v">${sm.total}</div><div class="sub">${sm.active} active · ${sm.running_in_nt} running in NT</div><div style="margin-top:6px">${stages}</div></div>
+   <div class="card"><div class="k">Net P&L since activation</div><div class="v ${cls(sm.net_pnl_since_activation)}">${money(sm.net_pnl_since_activation)}</div><div class="sub">${sm.trades} closed trades, active strategies</div></div>
+   <div class="card"><div class="k">Today</div><div class="v ${cls(sm.pnl_today)}">${money(sm.pnl_today)}</div></div>
+   <div class="card"><div class="k">Verdicts (active)</div><div class="v" style="font-size:15px">${sm.verdicts.promote} promote · ${sm.verdicts.keep_testing} keep testing · <span class="${sm.verdicts.reject?'neg':''}">${sm.verdicts.reject} reject</span></div>
+     <div class="sub">${sm.needs_attention.map(esc).join('<br>')||'nothing needs attention'}</div></div></div>`;
+  if(d.rules){h+=`<h2>Prop rules (${esc(d.rules.overall)})</h2><div class="cards">`+Object.entries(d.rules.rules).map(([k,r])=>{
+    const t=k=='trailing_drawdown'?`${money(r.distance)} cushion · floor ${money(r.floor)}`:k=='profit_target'?`${money(r.progress)} of ${money(r.target)}`:k=='daily_loss_limit'?`${money(r.distance)} left`:`best day ${pct(r.share)} of profit (max ${pct(r.max_share_of_profit)})`;
+    return `<div class="card"><div class="k">${esc(k.replace(/_/g,' '))}</div><div class="v" style="font-size:16px"><span class="pill ${r.status=='ok'?'ok':r.status=='breach'?'bad':r.status=='warning'?'warn':''}">${esc(r.status||'n/a')}</span></div><div class="sub">${t}</div></div>`}).join('')+'</div>'}
+  if(nt.accounts.length){h+=`<h2>Accounts</h2><div class="cards">`+nt.accounts.map(a=>`<div class="card"><div class="k">${esc(a.name)} · ${esc(a.connection||'')}</div><div class="v">${money(a.cash_value)}</div><div class="sub">realized ${money(a.realized_pnl)} · unrealized ${money(a.unrealized_pnl)} · ${a.positions.length} position(s)</div></div>`).join('')+'</div>'}
+  const act=d.strategies.filter(s=>['sim','live-small','live'].includes(s.status)),pend=d.strategies.filter(s=>['candidate','backtest'].includes(s.status)),arc=d.strategies.filter(s=>['rejected','retired'].includes(s.status));
+  h+=`<h2>Active strategies (${act.length})</h2>`+(act.map(strat).join('')||'<div class="sub">None active.</div>');
+  h+=`<h2>Waiting to be enabled (${pend.length})</h2>`+(pend.map(strat).join('')||'<div class="sub">None.</div>');
+  if(arc.length)h+=`<h2>Rejected / retired (${arc.length})</h2>`+arc.map(strat).join('');
+  const open=[...document.querySelectorAll('details')].map(x=>x.open);
+  $('#root').innerHTML=h;document.querySelectorAll('details').forEach((x,i)=>{if(open[i]!==undefined)x.open=open[i]});
+}
+async function load(){
+  try{const r=await fetch('/api/data'),d=await r.json();if(d.error){$('#err').innerHTML='<div class="err">'+esc(d.error)+'</div>';return}
+    $('#err').innerHTML=d.nt.reachable?'':'<div class="err">NinjaTrader add-on unreachable ('+esc(d.nt.error)+'). Showing journaled data only; live state and new fills are unavailable.</div>';render(d)}
+  catch(e){$('#err').innerHTML='<div class="err">Dashboard server unreachable: '+esc(e)+'</div>'}
+}
+$('#rf').onclick=load;load();setInterval(load,15000);
+</script></body></html>
