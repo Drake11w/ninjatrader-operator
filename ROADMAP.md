@@ -38,9 +38,8 @@ and needs to be reconciled with the real system's strategy format and metrics.
 - [ ] Comparison tools: backtest vs sim vs live on identical metrics; flag drift (fill quality, slippage, win-rate gap)
 - [ ] Robustness checks: walk-forward splits, parameter sensitivity, Monte Carlo trade reshuffle,
       worst-case drawdown vs prop-firm limit, minimum sample size warnings
-- [ ] Verdict engine: explicit, written promotion criteria (e.g. N trades, expectancy > X after costs,
-      max DD < Y% of the firm limit, live/sim drift < Z). Output: promote / keep testing / reject, with reasons
-- [ ] Experiment log: every spec, version, result and verdict stored so nothing is re-tested blindly
+- [x] Verdict engine (`evaluate_strategy`, `evaluate_all_strategies`; `verdict.py`): criteria in `DEFAULT_CRITERIA` (30 trades / 20 days minimum, expectancy > 0, PF >= 1.2, drawdown <= 50% of the $2,000 limit, sim expectancy >= 40% of claim). Hard rejects: drawdown >= 90% of limit at any sample size; after 20 trades, negative expectancy with PF < 0.8, or win rate z < -2.5 vs claim. Recommends only; never disables or promotes
+- [~] Experiment log: verdicts stored with `evaluate_strategy(record=true)`, read with `list_verdicts`. Still open: logging backtests/parameter variants together with verdicts
 
 ## Phase 4 - Feedback to the Lucid system
 - [ ] `get_feedback(strategy_id)`: structured results (per-trade rows + summary + verdict + drift notes)
