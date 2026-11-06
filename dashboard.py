@@ -18,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import journal
 import registry
 import rules as rules_mod
+import sup_daemon
+import sup_incidents
 import trades as trades_mod
 import verdict
 
@@ -125,6 +127,32 @@ def _strategy(rcon, jcon, spec_row: dict, nt: dict, account: str, now: datetime)
     }
 
 
+def supervisor_panel(now: datetime) -> dict:
+    """Read-only view of the Strategy Supervisor: daemon heartbeat, active incidents, performance/behavior check
+    status. Never creates the supervisor DB; reports 'not started' if it does not exist."""
+    path = os.environ.get("NT_SUPERVISOR_DB", sup_incidents.DEFAULT_DB)
+    if not os.path.exists(path):
+        return {"available": False, "reason": "supervisor has never run (no supervisor.sqlite)"}
+    try:
+        con = sup_incidents.connect(path)
+        try:
+            st = sup_daemon.status(con, now)
+            incidents = sup_incidents.list_incidents(con, "active")
+            cache = sup_incidents.get_state(con, "perf_cache", None)
+        finally:
+            con.close()
+    except Exception as e:
+        return {"available": False, "reason": f"{type(e).__name__}: {e}"}
+    perf = None
+    if cache:
+        perf = {"checked_at": cache.get("at"), "skipped": cache.get("skipped"), "notes": cache.get("notes", []),
+                "findings": len(cache.get("findings") or [])}
+    return {"available": True, "heartbeat_age_seconds": st["heartbeat_age_seconds"],
+            "heartbeat_stale": st["heartbeat_stale"], "perf": perf,
+            "incidents": [{k: i[k] for k in ("id", "key", "severity", "status", "account", "strategy", "trigger",
+                                             "opened_at", "last_seen_at")} for i in incidents]}
+
+
 def collect(account: str = "", sync: bool = True, fetch_fn=None, now: datetime = None) -> dict:
     fetch_fn = fetch_fn or fetch
     now = now or _now()
@@ -171,7 +199,7 @@ def collect(account: str = "", sync: bool = True, fetch_fn=None, now: datetime =
                             if i["verdict"]["verdict"] in ("promote", "reject")],
     }
     return {"generated_at": now.isoformat(), "nt": nt, "summary": summary, "strategies": items,
-            "rules": rules_out, "journal_synced_new_fills": synced}
+            "rules": rules_out, "supervisor": supervisor_panel(now), "journal_synced_new_fills": synced}
 
 
 class Handler(BaseHTTPRequestHandler):

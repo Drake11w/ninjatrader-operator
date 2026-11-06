@@ -93,6 +93,17 @@ function strat(s){
       ${rec?`<table style="margin-top:8px"><tr><th>Recorded</th><th>Stage</th><th>Verdict</th><th>Trades</th><th>Net</th></tr>${rec}</table>`:''}</details>
     ${s.hypothesis?`<details><summary>Hypothesis</summary><div class=hyp>${esc(s.hypothesis)}</div></details>`:''}</div>`;
 }
+const CHECK={performance_drift:'Performance vs backtest',trade_pace:'Trade pace',holding_time_shift:'Holding time',fills_unpairable:'Unpairable fills'};
+function supervisor(s){
+  if(!s)return '';
+  if(!s.available)return `<h2>Supervisor</h2><div class="card"><span class="pill">not running</span> <span class="sub">${esc(s.reason)}</span></div>`;
+  const hb=s.heartbeat_stale?`<span class="pill bad">Daemon not running${s.heartbeat_age_seconds==null?'':' · last beat '+dur(s.heartbeat_age_seconds)+' ago'}</span>`:`<span class="pill ok">Daemon running · beat ${dur(s.heartbeat_age_seconds)} ago</span>`;
+  const p=s.perf,pp=!p?'<span class="pill">Performance checks not run yet</span>':p.skipped&&!p.findings?`<span class="pill warn">Performance checks skipped</span> <span class="sub">${esc(p.skipped)}</span>`:`<span class="pill ${p.findings?'warn':'ok'}">Performance checks: ${p.findings} finding(s)</span> <span class="sub">checked ${ago(p.checked_at)}${p.skipped?' · last refresh skipped: '+esc(p.skipped):''}</span>`;
+  const rows=s.incidents.map(i=>`<tr><td>${esc(i.id)}</td><td><span class="pill ${i.severity>=3?'bad':i.severity==2?'warn':''}">SEV${i.severity}</span></td><td>${esc(CHECK[i.key]||i.key)}</td><td>${esc([i.account,i.strategy].filter(Boolean).join(' '))}</td><td>${esc(i.trigger)}</td><td>${ago(i.opened_at)}</td><td>${esc(i.status)}</td></tr>`).join('');
+  const notes=p&&p.notes&&p.notes.length?`<details><summary>Check notes (${p.notes.length})</summary><ul class=reasons>${p.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></details>`:'';
+  return `<h2>Supervisor (${s.incidents.length} active incident${s.incidents.length==1?'':'s'})</h2><div class="card">${hb} ${pp}
+    ${rows?`<table style="margin-top:10px"><tr><th>ID</th><th>Sev</th><th>Check</th><th>Who</th><th>What</th><th>Opened</th><th>Status</th></tr>${rows}</table>`:'<div class="sub" style="margin-top:8px">No active incidents.</div>'}${notes}</div>`;
+}
 function render(d){
   const sm=d.summary,nt=d.nt;
   $('#nt').className='pill '+(nt.reachable?'ok':'bad');$('#nt').textContent=nt.reachable?'NinjaTrader connected':'NinjaTrader unreachable';
@@ -104,6 +115,7 @@ function render(d){
    <div class="card"><div class="k">Today</div><div class="v ${cls(sm.pnl_today)}">${money(sm.pnl_today)}</div></div>
    <div class="card"><div class="k">Verdicts (active)</div><div class="v" style="font-size:15px">${sm.verdicts.promote} promote · ${sm.verdicts.keep_testing} keep testing · <span class="${sm.verdicts.reject?'neg':''}">${sm.verdicts.reject} reject</span></div>
      <div class="sub">${sm.needs_attention.map(esc).join('<br>')||'nothing needs attention'}</div></div></div>`;
+  h+=supervisor(d.supervisor);
   if(d.rules){h+=`<h2>Prop rules (${esc(d.rules.overall)})</h2><div class="cards">`+Object.entries(d.rules.rules).map(([k,r])=>{
     const t=k=='trailing_drawdown'?`${money(r.distance)} cushion · floor ${money(r.floor)}`:k=='profit_target'?`${money(r.progress)} of ${money(r.target)}`:k=='daily_loss_limit'?`${money(r.distance)} left`:`best day ${pct(r.share)} of profit (max ${pct(r.max_share_of_profit)})`;
     return `<div class="card"><div class="k">${esc(k.replace(/_/g,' '))}</div><div class="v" style="font-size:16px"><span class="pill ${r.status=='ok'?'ok':r.status=='breach'?'bad':r.status=='warning'?'warn':''}">${esc(r.status||'n/a')}</span></div><div class="sub">${t}</div></div>`}).join('')+'</div>'}
