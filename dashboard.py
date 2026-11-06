@@ -15,6 +15,8 @@ import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import backtest as backtest_mod
+import comparison
 import journal
 import registry
 import rules as rules_mod
@@ -68,6 +70,14 @@ def _equity(ts: list, tz_name: str) -> list:
     return out
 
 
+def _ref_durations(rcon, sid, ver) -> list:
+    runs = backtest_mod.list_runs(rcon, sid, ver)
+    full = backtest_mod.get_run(rcon, runs[0]["run_id"]) if runs else None
+    if not full or not full.get("trades_json"):
+        return []
+    return [t.get("duration_sec") for t in json.loads(full["trades_json"])]
+
+
 def _strategy(rcon, jcon, spec_row: dict, nt: dict, account: str, now: datetime) -> dict:
     sid, ver = spec_row["id"], spec_row["version"]
     full = registry.get_spec(rcon, sid, ver)
@@ -105,6 +115,7 @@ def _strategy(rcon, jcon, spec_row: dict, nt: dict, account: str, now: datetime)
     appr = registry.get_approval(rcon, sid, ver)
     recorded = verdict.history(rcon, sid, ver, 10)
     bt = res.get("backtest") or {}
+    cmp_rows = comparison.compare(perf, bt, ts, _ref_durations(rcon, sid, ver)) if bt or ts else None
     return {
         "id": sid, "version": ver, "name": spec.get("name") or sid, "lucid_id": spec.get("lucid_id"),
         "hypothesis": spec.get("hypothesis"), "status": status, "status_since": cur.get("at"),
@@ -123,7 +134,7 @@ def _strategy(rcon, jcon, spec_row: dict, nt: dict, account: str, now: datetime)
         "expected_metrics": spec.get("expected_metrics"),
         "verdict": {k: res.get(k) for k in ("verdict", "edge_decayed", "reasons", "checks", "sample", "eta",
                                             "next_step", "expected", "warnings", "criteria")},
-        "recorded_verdicts": recorded,
+        "recorded_verdicts": recorded, "comparison": cmp_rows,
     }
 
 
@@ -139,6 +150,9 @@ def supervisor_panel(now: datetime) -> dict:
             st = sup_daemon.status(con, now)
             incidents = sup_incidents.list_incidents(con, "active")
             cache = sup_incidents.get_state(con, "perf_cache", None)
+            recent = [dict(r) for r in con.execute(
+                "SELECT i.id, e.at, e.kind, i.key, i.account, i.strategy, i.severity FROM incident_events e "
+                "JOIN incidents i ON i.id = e.incident_id ORDER BY e.seq DESC LIMIT 20")]
         finally:
             con.close()
     except Exception as e:
@@ -148,7 +162,7 @@ def supervisor_panel(now: datetime) -> dict:
         perf = {"checked_at": cache.get("at"), "skipped": cache.get("skipped"), "notes": cache.get("notes", []),
                 "findings": len(cache.get("findings") or [])}
     return {"available": True, "heartbeat_age_seconds": st["heartbeat_age_seconds"],
-            "heartbeat_stale": st["heartbeat_stale"], "perf": perf,
+            "heartbeat_stale": st["heartbeat_stale"], "perf": perf, "recent_events": recent,
             "incidents": [{k: i[k] for k in ("id", "key", "severity", "status", "account", "strategy", "trigger",
                                              "opened_at", "last_seen_at")} for i in incidents]}
 

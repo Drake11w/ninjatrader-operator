@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from mcp.server.mcpserver import MCPServer
 
 import backtest
+import comparison
 import control
 import handoff
 import journal
@@ -372,6 +373,19 @@ def check_backtest(run_id: int) -> str:
                            "metrics": m, "claims_check": backtest.claims_check(m, spec or {})}, indent=2)
     finally:
         rcon.close()
+
+
+@mcp.tool()
+def compare_backtest_to_sim(id: str, version: str, account: str = "") -> str:
+    """Backtest vs sim on identical metrics (expectancy, win rate, profit factor, average win/loss, trades per year,
+    median holding time) for a registered strategy version, with an ok/worse/better/shift flag per row. Flags are
+    suppressed below 15 sim trades. Read-only; it does not record a verdict or change a stage."""
+    rcon, jcon = registry.connect(), journal.connect()
+    try:
+        return json.dumps(comparison.for_strategy(rcon, jcon, id, version, account), indent=2, default=str)
+    finally:
+        rcon.close()
+        jcon.close()
 
 
 @mcp.tool()

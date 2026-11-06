@@ -49,6 +49,27 @@ class WatchTests(unittest.TestCase):
         si.apply_findings(self.con, [finding(1, "unknown_strategy")], T0)
         self.assertEqual(sup_watch.check(self.con, T0), [])
 
+    def test_push_toasts_and_posts_only_when_url_set(self):
+        import os
+        from unittest import mock
+        with mock.patch.object(sup_watch.sup_alerts, "toast") as toast,                 mock.patch.object(sup_watch.urllib.request, "urlopen") as uo:
+            os.environ.pop("NT_WATCH_PUSH_URL", None)
+            sup_watch.push("x")
+            toast.assert_called_once()
+            uo.assert_not_called()
+            os.environ["NT_WATCH_PUSH_URL"] = "https://ntfy.example/topic"
+            self.addCleanup(lambda: os.environ.pop("NT_WATCH_PUSH_URL", None))
+            sup_watch.push("x")
+            uo.assert_called_once()
+
+    def test_push_never_raises(self):
+        from unittest import mock
+        with mock.patch.object(sup_watch.sup_alerts, "toast", side_effect=OSError):
+            try:
+                sup_watch.push("x")
+            except OSError:
+                self.fail("push raised")
+
 
 if __name__ == "__main__":
     unittest.main()
