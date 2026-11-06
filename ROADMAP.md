@@ -20,7 +20,7 @@ and needs to be reconciled with the real system's strategy format and metrics.
 - [ ] Session/market info: current session, time to RTH open/close, front-month contract roll
 
 ## Phase 2 - Record and analyze (still read-only)
-- [ ] Trade journal: persist every execution to SQLite/Parquet (survives NT restarts), tagged by strategy + version
+- [x] Trade journal: persist every execution to SQLite (survives NT restarts), tagged by strategy + version (call `sync_journal` periodically; auto-sync not built)
 - [ ] Round-trip trade builder: pair entry/exit into trades with MAE/MFE, duration, slippage vs signal price
 - [ ] Performance tools: net P&L, win rate, expectancy, profit factor, avg win/loss, max drawdown, Sharpe/Sortino,
       by day-of-week, time-of-day, regime, month (Monday RTH etc.)

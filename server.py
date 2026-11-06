@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 from mcp.server.mcpserver import MCPServer
 
+import journal
+
 BASE = os.environ.get("NT_ADDON_URL", "http://127.0.0.1:8765")
 STALE_SECONDS = 30
 mcp = MCPServer("ninjatrader-readonly")
@@ -92,6 +94,32 @@ def get_strategies(account: str = "") -> str:
         return json.dumps(data)
     rows = [x for x in data["strategies"] if not account or x["account"] == account]
     return json.dumps({**_meta(data), "strategies": rows}, indent=2)
+
+
+@mcp.tool()
+def sync_journal(strategy: str = "", version: str = "", limit: int = 500) -> str:
+    """Save NinjaTrader's recent fills into the local SQLite journal (safe to repeat; duplicates are skipped).
+    Optionally tag new rows with a strategy name and version. Writes only to the local journal, never to NinjaTrader."""
+    data = _fetch(f"/executions?limit={max(1, min(limit, 500))}")
+    if "error" in data:
+        return json.dumps(data)
+    con = journal.connect()
+    try:
+        counts = journal.record(con, data["executions"], strategy, version)
+    finally:
+        con.close()
+    return json.dumps({**_meta(data), **counts, "fetched": len(data["executions"])}, indent=2)
+
+
+@mcp.tool()
+def get_journal(account: str = "", strategy: str = "", since: str = "", limit: int = 200) -> str:
+    """Read persisted fills from the local journal (survives NT restarts). `since` is an ISO timestamp."""
+    con = journal.connect()
+    try:
+        rows = journal.query(con, account, strategy, since, limit)
+    finally:
+        con.close()
+    return json.dumps({"count": len(rows), "executions": rows}, indent=2)
 
 
 @mcp.tool()
