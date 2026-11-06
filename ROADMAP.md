@@ -32,7 +32,7 @@ and needs to be reconciled with the real system's strategy format and metrics.
 ## Phase 3 - Strategy evaluation bridge (the core of the integration)
 - [~] Shared strategy spec (v1 DRAFT in `STRATEGY_SPEC.md` + `validate_strategy_spec`; needs reconciling with the Lucid system's real format): one JSON/YAML schema (id, version, instrument, session, entry/exit rules,
       sizing, stops, parameters, hypothesis, expected metrics). Lucid system emits it; operator ingests it.
-- [ ] `submit_strategy(spec)`: register a candidate; status moves candidate -> backtest -> sim -> live-small -> live
+- [x] `submit_strategy(spec)` + `set_strategy_status`, `list_submitted_strategies`, `get_submitted_strategy`: immutable (id, version) registry; status moves one stage at a time candidate -> backtest -> sim -> live-small -> live (or rejected/retired with a reason); history kept. Bookkeeping only, no gating by metrics yet (that is the verdict engine)
 - [ ] Backtest ingestion: import NinjaTrader Strategy Analyzer exports (CSV/XML) and/or Lucid backtest results
 - [ ] Comparison tools: backtest vs sim vs live on identical metrics; flag drift (fill quality, slippage, win-rate gap)
 - [ ] Robustness checks: walk-forward splits, parameter sensitivity, Monte Carlo trade reshuffle,
