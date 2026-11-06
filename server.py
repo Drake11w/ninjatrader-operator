@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from mcp.server.mcpserver import MCPServer
 
+import backtest
 import journal
 import registry
 import report
@@ -276,6 +277,92 @@ def list_submitted_strategies(id: str = "", status: str = "") -> str:
 def get_submitted_strategy(id: str, version: str) -> str:
     """Full stored spec for one registered version, plus its status history."""
     return json.dumps(registry.get_spec(registry.connect(), id, version), indent=2)
+
+
+def _load_spec(rcon, id: str, version: str):
+    row = registry.get_spec(rcon, id, version)
+    return None if "error" in row else row["spec"]
+
+
+@mcp.tool()
+def import_backtest(id: str, version: str, path: str = "", csv_text: str = "", label: str = "",
+                    export_timezone: str = "") -> str:
+    """Import a NinjaTrader Strategy Analyzer CSV export (Trades grid, or Periods grid with Period = Day) for a
+    registered strategy version. Give a file `path` on this machine or the `csv_text`. Timestamps are read in
+    `export_timezone` (default: the spec's). Stores the run and returns metrics, a check against the spec's
+    expected_metrics, and warnings about what was assumed. Local only; never touches NinjaTrader."""
+    rcon = registry.connect()
+    try:
+        spec = _load_spec(rcon, id, version)
+        if spec is None:
+            return json.dumps({"ok": False, "error": f"{id} {version} is not registered (use submit_strategy first)"})
+        if path:
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read()
+            except OSError as e:
+                return json.dumps({"ok": False, "error": f"cannot read {path}: {e}"})
+            try:
+                csv_text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                csv_text = raw.decode("cp1252")
+        if not csv_text.strip():
+            return json.dumps({"ok": False, "error": "give a file path or the CSV text"})
+        return json.dumps(backtest.import_run(rcon, spec, csv_text, label, os.path.basename(path), export_timezone),
+                          indent=2)
+    finally:
+        rcon.close()
+
+
+@mcp.tool()
+def list_backtests(id: str = "", version: str = "") -> str:
+    """List imported backtest runs (newest first) with a short metric summary."""
+    rcon = registry.connect()
+    try:
+        return json.dumps(backtest.list_runs(rcon, id, version), indent=2)
+    finally:
+        rcon.close()
+
+
+@mcp.tool()
+def check_backtest(run_id: int) -> str:
+    """Full metrics of an imported run, checked against its spec's expected_metrics (within 15% = ok)."""
+    rcon = registry.connect()
+    try:
+        run = backtest.get_run(rcon, run_id)
+        if not run:
+            return json.dumps({"error": f"no backtest run {run_id}"})
+        spec = _load_spec(rcon, run["spec_id"], run["version"])
+        m = json.loads(run["metrics_json"])
+        return json.dumps({"run_id": run_id, "spec": f"{run['spec_id']} {run['version']}", "label": run["label"],
+                           "metrics": m, "claims_check": backtest.claims_check(m, spec or {})}, indent=2)
+    finally:
+        rcon.close()
+
+
+@mcp.tool()
+def compare_backtest_to_journal(run_id: int, account: str = "", leg: str = "") -> str:
+    """Day-by-day comparison of an imported backtest against the journaled sim/live trades of the same strategy:
+    days only one side traded, same-direction rate, net difference, biggest daily gaps. The backtest must cover the
+    live period (re-run the Analyzer over it). `leg` limits both sides to one leg (needs a Trades-grid import)."""
+    rcon = registry.connect()
+    try:
+        run = backtest.get_run(rcon, run_id)
+        if not run:
+            return json.dumps({"error": f"no backtest run {run_id}"})
+        spec = _load_spec(rcon, run["spec_id"], run["version"]) or {}
+    finally:
+        rcon.close()
+    jcon = journal.connect()
+    try:
+        rows = journal.query(jcon, account, run["spec_id"], "", 5000)
+    finally:
+        jcon.close()
+    if leg:
+        rows = [r for r in rows if r.get("leg") == leg]
+    built = trades.build_trades(rows)
+    out = backtest.compare_to_journal(run, spec, built["trades"], leg)
+    return json.dumps(out, indent=2)
 
 
 @mcp.tool()
