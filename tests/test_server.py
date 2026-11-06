@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 NOW = lambda: datetime.now(timezone.utc).isoformat()
 OLD = lambda: (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
 state = {"ts": NOW}
+posts = []
 
 
 def payloads():
@@ -40,6 +41,12 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data or {"error": "nf"}).encode())
 
+    def do_POST(self):
+        posts.append((self.path, self.headers.get("X-NT-Token")))
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(json.dumps({"ok": True, "action": self.path}).encode())
+
     def log_message(self, *a):
         pass
 
@@ -65,6 +72,45 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(json.loads(self.s.get_accounts())["accounts"][0]["cash_value"], 50000)
         self.assertEqual(len(json.loads(self.s.get_positions("Sim101"))["accounts"]), 1)
         self.assertEqual(json.loads(self.s.get_positions("Nope"))["accounts"], [])
+
+    def test_controls_guarded_and_audited(self):
+        import tempfile
+        os.environ["NT_AUDIT_FILE"] = os.path.join(tempfile.mkdtemp(), "audit.jsonl")
+        posts.clear()
+        out = json.loads(self.s.flatten("Sim101", "MNQ 12-26", "test"))
+        self.assertTrue(out["ok"])
+        self.assertEqual(posts[0][0].split("?")[0], "/flatten")
+        self.assertIn("instrument=MNQ", posts[0][0])
+        # live account refused, nothing sent
+        n = len(posts)
+        bad = json.loads(self.s.flatten("LFE05079396550004"))
+        self.assertFalse(bad["ok"])
+        self.assertIn("locked", bad["error"])
+        self.assertFalse(json.loads(self.s.flatten(""))["ok"])
+        self.assertFalse(json.loads(self.s.arm_kill_switch("Sim101", 0))["ok"])
+        self.assertFalse(json.loads(self.s.arm_kill_switch("Sim101", 99999))["ok"])
+        self.assertEqual(len(posts), n)
+        self.assertTrue(json.loads(self.s.arm_kill_switch("Sim101", 500))["ok"])
+        self.assertIn("max_loss=500", posts[-1][0])
+        self.assertTrue(json.loads(self.s.cancel_all_orders("Sim101"))["ok"])
+        self.assertTrue(json.loads(self.s.disarm_kill_switch())["ok"])
+        log = json.loads(self.s.get_audit_log())
+        self.assertEqual([r["action"] for r in log],
+                         ["flatten", "flatten", "flatten", "arm_kill_switch", "arm_kill_switch", "arm_kill_switch",
+                          "cancel_all", "disarm_kill_switch"])
+        self.assertEqual([r["ok"] for r in log][:3], [True, False, False])
+
+    def test_live_unlock_and_token(self):
+        import tempfile
+        os.environ["NT_AUDIT_FILE"] = os.path.join(tempfile.mkdtemp(), "audit.jsonl")
+        os.environ["NT_OPERATOR_ALLOW_LIVE"] = "1"
+        os.environ["NT_OPERATOR_TOKEN"] = "secret"
+        try:
+            posts.clear()
+            self.assertTrue(json.loads(self.s.flatten("LFE05079396550004"))["ok"])
+            self.assertEqual(posts[0][1], "secret")
+        finally:
+            del os.environ["NT_OPERATOR_ALLOW_LIVE"], os.environ["NT_OPERATOR_TOKEN"]
 
     def test_orders_filter(self):
         self.assertEqual(len(json.loads(self.s.get_orders())["orders"]), 2)

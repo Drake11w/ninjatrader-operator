@@ -51,11 +51,11 @@ and needs to be reconciled with the real system's strategy format and metrics.
 
 ## Phase 5 - Controlled actions (only after Phases 1-4 are trusted)
 All of these sit behind server-side guards, not just prompts:
-- [ ] Hard daily-loss cap, max position size, max trades/day, allowed instruments/hours, kill switch
+- [x] Daily-loss kill switch (`arm_kill_switch`, in the add-on, latched flatten+cancel; in-memory, Sim-only). Still open: max position size, max trades/day, allowed instruments/hours, persistence across NT restarts, disabling the strategy itself
 - [ ] Pause/resume a strategy (disable/enable only; never changes parameters live)
-- [ ] Flatten-all emergency tool (reduces risk only)
-- [ ] Sim-only enforcement flag: control tools refuse to act on non-sim accounts unless explicitly unlocked
-- [ ] Audit log of every control action with who/why/result
+- [x] Flatten and cancel-all tools (`flatten`, `cancel_all_orders`; reduce risk only). Unverified in NT8: Account.Flatten / Account.Cancel
+- [x] Sim-only enforcement: both the add-on and server refuse non-Sim accounts unless NT_OPERATOR_ALLOW_LIVE=1
+- [x] Audit log of every control action (time, params, reason, result; refusals included): `get_audit_log`
 - [ ] Order entry: last, if ever; sim accounts first; human confirmation per order
 
 ## Cross-cutting
