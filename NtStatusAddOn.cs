@@ -320,6 +320,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             code = 200;
             if (!StrategyStartAllowed()) { code = 403; return Err("strategy start is locked: set NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment"); }
+            if (!a.Name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NT_OPERATOR_TOKEN")))
+            { code = 403; return Err("live-small strategy start requires NT_OPERATOR_TOKEN in both the MCP server and NinjaTrader environments"); }
             string cls = ctx.Request.QueryString["class"], name = ctx.Request.QueryString["name"], instrument = ctx.Request.QueryString["instrument"];
             if (string.IsNullOrEmpty(cls) || string.IsNullOrEmpty(name) || string.IsNullOrEmpty(instrument)) { code = 400; return Err("class, name and instrument are required"); }
             Type type = FindStrategyType(cls);
