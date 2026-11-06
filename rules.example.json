@@ -1,0 +1,11 @@
+{
+  "_note": "PLACEHOLDER numbers. Replace with your firm's real rules, then copy to ~/.ninjatrader-operator/rules.json (or set NT_RULES_FILE).",
+  "starting_balance": 50000,
+  "profit_target": 3000,
+  "daily_loss_limit": 1100,
+  "trailing_drawdown": {"amount": 2000, "mode": "eod", "lock_at_start": true},
+  "consistency_pct": 0.5,
+  "warn_at": 0.8,
+  "timezone": "America/New_York",
+  "session_start_hour": 18
+}

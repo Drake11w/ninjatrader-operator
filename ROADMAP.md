@@ -24,8 +24,8 @@ and needs to be reconciled with the real system's strategy format and metrics.
 - [x] Round-trip trade builder: FIFO pairing into trades with duration and net P&L (`get_trades`); MAE/MFE and slippage vs signal price still need bar/signal data from the add-on
 - [x] Performance tools (`get_performance`): net P&L, win rate, expectancy, profit factor, avg win/loss, max drawdown, daily Sharpe/Sortino,
       by weekday, entry hour, month. Still open: by regime (needs the regime state below)
-- [ ] Prop-firm rule tracker: daily loss limit, trailing drawdown, profit target, consistency rule,
-      distance-to-breach in dollars; alert thresholds (put the real Lucid rule values in config)
+- [x] Prop-firm rule tracker (`get_rule_status`): daily loss limit, trailing drawdown (EOD or intraday, optional lock), profit target, consistency rule,
+      distance-to-breach in dollars, ok/warning/breach thresholds. Closed-trade basis (optional unrealized). Needs real Lucid values in the rules file; push alerts not built
 - [ ] Regime state: expose the system's regime classification (trend/range/high-vol) alongside each trade
 - [ ] Daily/weekly report generator (markdown/HTML) that Claude can read or send
 

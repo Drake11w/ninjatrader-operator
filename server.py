@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from mcp.server.mcpserver import MCPServer
 
 import journal
+import rules
 import trades
 
 BASE = os.environ.get("NT_ADDON_URL", "http://127.0.0.1:8765")
@@ -153,6 +154,34 @@ def _trade_report(account, strategy, since, point_values, summary_only):
     else:
         out = {"count": len(built["trades"]), "trades": built["trades"], "open_positions": built["open"]}
     out["warnings"] = built["warnings"]
+    return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+def get_rule_status(account: str = "", strategy: str = "", include_unrealized: bool = False) -> str:
+    """Prop-firm rule tracker: distance in dollars to the daily loss limit, trailing drawdown floor, profit target
+    and consistency rule, with ok/warning/breach status. Uses closed trades from the journal (run sync_journal
+    first); set include_unrealized to add current open P&L from NinjaTrader. Rule values come from the rules file
+    (NT_RULES_FILE or ~/.ninjatrader-operator/rules.json; see rules.example.json)."""
+    try:
+        cfg = rules.load_rules()
+    except (OSError, ValueError) as e:
+        return json.dumps({"error": str(e)})
+    unrealized = 0.0
+    if include_unrealized:
+        data = _fetch("/status")
+        if "error" in data:
+            return json.dumps(data)
+        unrealized = sum(a.get("unrealized_pnl") or 0 for a in data.get("accounts", [])
+                         if not account or a.get("name") == account)
+    con = journal.connect()
+    try:
+        rows = journal.query(con, account, strategy, "", 5000)
+    finally:
+        con.close()
+    built = trades.build_trades(rows)
+    out = rules.evaluate(built["trades"], cfg, unrealized=unrealized)
+    out["warnings"] += built["warnings"]
     return json.dumps(out, indent=2)
 
 
