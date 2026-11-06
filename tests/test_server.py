@@ -127,7 +127,7 @@ class ServerTests(unittest.TestCase):
 
     def test_live_small_gate_requires_exact_status_unlock_and_allowlist(self):
         check = self.s._check_live_small_deployment
-        for key in ("NT_OPERATOR_ALLOW_LIVE_SMALL", "NT_OPERATOR_LIVE_SMALL_ACCOUNTS", "NT_OPERATOR_ALLOW_STRATEGY_START"):
+        for key in ("NT_OPERATOR_ALLOW_LIVE_SMALL", "NT_OPERATOR_LIVE_SMALL_ACCOUNTS", "NT_OPERATOR_ALLOW_STRATEGY_START", "NT_OPERATOR_TOKEN"):
             os.environ.pop(key, None)
         os.environ["NT_OPERATOR_ALLOW_LIVE"] = "1"  # broad legacy unlock must not bypass this gate
         try:
@@ -135,6 +135,8 @@ class ServerTests(unittest.TestCase):
             os.environ["NT_OPERATOR_ALLOW_LIVE_SMALL"] = "1"
             os.environ["NT_OPERATOR_LIVE_SMALL_ACCOUNTS"] = "LiveAcct, OtherAcct"
             os.environ["NT_OPERATOR_ALLOW_STRATEGY_START"] = "1"
+            self.assertIsNotNone(check("LiveAcct", "live-small"))  # shared token is also mandatory
+            os.environ["NT_OPERATOR_TOKEN"] = "test-secret"
             self.assertIsNone(check("LiveAcct", "live-small"))
             self.assertIsNotNone(check("LiveAcct", "sim"))
             self.assertIsNotNone(check("LiveAcct ", "live-small"))
@@ -142,7 +144,7 @@ class ServerTests(unittest.TestCase):
             self.assertIsNotNone(check("LiveAcct", "live-small"))
         finally:
             for key in ("NT_OPERATOR_ALLOW_LIVE", "NT_OPERATOR_ALLOW_LIVE_SMALL",
-                        "NT_OPERATOR_LIVE_SMALL_ACCOUNTS", "NT_OPERATOR_ALLOW_STRATEGY_START"):
+                        "NT_OPERATOR_LIVE_SMALL_ACCOUNTS", "NT_OPERATOR_ALLOW_STRATEGY_START", "NT_OPERATOR_TOKEN"):
                 os.environ.pop(key, None)
 
     def test_orders_filter(self):
