@@ -226,7 +226,7 @@ def get_session_info(instrument: str = "") -> str:
 
 @mcp.tool()
 def validate_strategy_spec(spec: str) -> str:
-    """Check a strategy spec (JSON text, schema v1) against the shared Lucid/operator format. Returns every problem
+    """Check a strategy spec (JSON text, schema v2 or legacy v1) against the shared Lucid/operator format. Returns every problem
     found at once, or a short summary if valid. Does not save or run anything. See STRATEGY_SPEC.md."""
     try:
         parsed = json.loads(spec)
@@ -240,7 +240,7 @@ def validate_strategy_spec(spec: str) -> str:
 
 @mcp.tool()
 def submit_strategy(spec: str, note: str = "") -> str:
-    """Register a candidate strategy spec (JSON text, schema v1). Validates first; always starts as 'candidate'.
+    """Register a candidate strategy spec (JSON text, schema v2 or legacy v1). Validates first; always starts as 'candidate'.
     An (id, version) pair is immutable: changes must be submitted as a new version. Records only, runs nothing."""
     try:
         parsed = json.loads(spec)

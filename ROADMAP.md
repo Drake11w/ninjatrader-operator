@@ -25,12 +25,12 @@ and needs to be reconciled with the real system's strategy format and metrics.
 - [x] Performance tools (`get_performance`): net P&L, win rate, expectancy, profit factor, avg win/loss, max drawdown, daily Sharpe/Sortino,
       by weekday, entry hour, month. Still open: by regime (needs the regime state below)
 - [x] Prop-firm rule tracker (`get_rule_status`): daily loss limit, trailing drawdown (EOD or intraday, optional lock), profit target, consistency rule,
-      distance-to-breach in dollars, ok/warning/breach thresholds. Closed-trade basis (optional unrealized). Needs real Lucid values in the rules file; push alerts not built
-- [ ] Regime state: expose the system's regime classification (trend/range/high-vol) alongside each trade
+      distance-to-breach in dollars, ok/warning/breach thresholds. Closed-trade basis (optional unrealized). `rules.example.json` now holds LucidFlex 50K values from the Lucid repo (target 3000, 2000 EOD trailing locking at 50100, 50% consistency; no daily loss limit found there, confirm against your account terms); push alerts not built
+- [ ] Regime state (Lucid labels: BULL_TREND / BEAR_TREND / HIGH_VOL_RANGE / LOW_VOL_RANGE, but its research mostly gates on VIX, event days and prior-day range): expose the system's regime classification (trend/range/high-vol) alongside each trade
 - [x] Daily/weekly report generator (`get_report`, markdown; HTML and sending not built)
 
 ## Phase 3 - Strategy evaluation bridge (the core of the integration)
-- [~] Shared strategy spec (v1 DRAFT in `STRATEGY_SPEC.md` + `validate_strategy_spec`; needs reconciling with the Lucid system's real format): one JSON/YAML schema (id, version, instrument, session, entry/exit rules,
+- [x] Shared strategy spec v2 (`STRATEGY_SPEC.md`, `validate_strategy_spec`, example `examples/two-leg-mnq.strategy.json`): legs + NinjaScript mapping + CT times + Lucid eval-odds metrics, reconciled with `lucid-trading-system`. v1 still accepted. Still to confirm with the Lucid side: per-leg metrics, how it will emit specs (file drop vs tool call): one JSON/YAML schema (id, version, instrument, session, entry/exit rules,
       sizing, stops, parameters, hypothesis, expected metrics). Lucid system emits it; operator ingests it.
 - [x] `submit_strategy(spec)` + `set_strategy_status`, `list_submitted_strategies`, `get_submitted_strategy`: immutable (id, version) registry; status moves one stage at a time candidate -> backtest -> sim -> live-small -> live (or rejected/retired with a reason); history kept. Bookkeeping only, no gating by metrics yet (that is the verdict engine)
 - [ ] Backtest ingestion: import NinjaTrader Strategy Analyzer exports (CSV/XML) and/or Lucid backtest results
