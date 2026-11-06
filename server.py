@@ -23,6 +23,7 @@ import rules
 import sessions
 import strategy_spec
 import trades
+import verdict
 
 BASE = os.environ.get("NT_ADDON_URL", "http://127.0.0.1:8765")
 STALE_SECONDS = 30
@@ -396,6 +397,123 @@ def compare_backtest_to_journal(run_id: int, account: str = "", leg: str = "") -
     built = trades.build_trades(rows)
     out = backtest.compare_to_journal(run, spec, built["trades"], leg)
     return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+def evaluate_strategy(id: str, version: str, account: str = "", criteria: str = "", record: bool = False,
+                      since: str = "") -> str:
+    """Judge a registered strategy version on its journaled Sim results: verdict promote / keep_testing / reject,
+    with every check, threshold and actual value (see verdict.py). Run sync_journal first. Trades are limited to this
+    spec version since it entered 'sim' (override with `since`, ISO time). Expected win rate/expectancy come from the
+    latest imported backtest, else the spec's expected_metrics. `criteria` is optional JSON overriding defaults, e.g.
+    {"min_trades": 40, "drawdown_limit": 2000}. record=true stores the verdict in the experiment log
+    (list_verdicts). Recommends only: it never disables or promotes anything."""
+    try:
+        crit = json.loads(criteria) if criteria else None
+    except ValueError:
+        return json.dumps({"error": "criteria must be valid JSON"})
+    rcon = registry.connect()
+    try:
+        row = registry.get_spec(rcon, id, version)
+        if "error" in row:
+            return json.dumps(row)
+        runs = backtest.list_runs(rcon, id, version)
+        bt = {}
+        if runs:
+            full = backtest.get_run(rcon, runs[0]["run_id"])
+            bt = json.loads(full["metrics_json"])
+        start = since or verdict.sim_start(rcon, id, version)
+        jcon = journal.connect()
+        try:
+            rows = journal.query(jcon, account, id, "", 5000)
+        finally:
+            jcon.close()
+        rows = [r for r in rows if r.get("strategy_version") in ("", version)]
+        built = trades.build_trades(rows)
+        mine = [t for t in built["trades"] if t.get("strategy_version") in ("", version)]
+        ref_pnls = []
+        if runs and full.get("trades_json"):
+            ref_pnls = [x.get("net_pnl", x.get("profit")) for x in json.loads(full["trades_json"])]
+            ref_pnls = [x for x in ref_pnls if isinstance(x, (int, float))]
+        out = verdict.evaluate(row["spec"], mine, bt, crit, start,
+                               row["spec"].get("timezone", "America/Chicago"), ref_pnls)
+        out.update(id=id, version=version, status=row["status"], since=start,
+                   next_step=verdict.action_for(out["verdict"], row["status"]))
+        if row["status"] not in ("sim", "live-small", "live"):
+            out["warnings"].append(f"status is '{row['status']}': it is not trading, so there are few or no trades to judge")
+        out["warnings"] += built["warnings"]
+        if record:
+            out["verdict_id"] = verdict.record(rcon, id, version, row["status"], out)
+        return json.dumps(out, indent=2)
+    finally:
+        rcon.close()
+
+
+@mcp.tool()
+def list_verdicts(id: str = "", version: str = "", limit: int = 50) -> str:
+    """Experiment log: recorded verdicts (newest first) for a strategy, to see how a strategy's results evolved."""
+    rcon = registry.connect()
+    try:
+        return json.dumps(verdict.history(rcon, id, version, limit), indent=2)
+    finally:
+        rcon.close()
+
+
+@mcp.tool()
+def evaluate_all_strategies(account: str = "", record: bool = False) -> str:
+    """One-line verdict for every registered strategy in sim/live-small/live. Same rules as evaluate_strategy."""
+    rcon = registry.connect()
+    try:
+        keys = [(s["id"], s["version"]) for st in ("sim", "live-small", "live")
+                for s in registry.list_specs(rcon, status=st)]
+    finally:
+        rcon.close()
+    rows = []
+    for sid, ver in keys:
+        r = json.loads(evaluate_strategy(sid, ver, account, "", record))
+        rows.append({"id": sid, "version": ver, "verdict": r.get("verdict"), "trades": r.get("sample", {}).get("trades"),
+                     "net_pnl": r.get("performance", {}).get("net_pnl"), "reasons": r.get("reasons"),
+                     "error": r.get("error")})
+    return json.dumps(rows, indent=2)
+
+
+@mcp.tool()
+def disable_decayed_strategies(account: str, reason: str = "", dry_run: bool = True) -> str:
+    """Find strategies in sim whose edge has decayed against their backtest (evaluate_strategy: edge_decayed) and
+    disable every leg on `account`. dry_run=true (default) only lists what would be disabled. With dry_run=false it
+    calls disable_strategy per leg (Sim-only, audited), then marks the spec 'retired' with the evidence as the note.
+    It does not flatten: check get_positions afterwards and use flatten if a leg holds a position."""
+    rcon = registry.connect()
+    try:
+        specs = registry.list_specs(rcon, status="sim")
+    finally:
+        rcon.close()
+    rows = []
+    for s in specs:
+        r = json.loads(evaluate_strategy(s["id"], s["version"], account, "", False))
+        if not r.get("edge_decayed"):
+            continue
+        rcon = registry.connect()
+        try:
+            spec = registry.get_spec(rcon, s["id"], s["version"])["spec"]
+        finally:
+            rcon.close()
+        names = [f"{s['id']} {s['version']} {leg['name']}" for leg in spec.get("legs", [])]
+        row = {"id": s["id"], "version": s["version"], "legs": names, "reasons": r["reasons"], "disabled": []}
+        if not dry_run:
+            note = "edge decayed vs backtest: " + "; ".join(r["reasons"])
+            for nm in names:
+                res = json.loads(disable_strategy(account, nm, reason or note))
+                row["disabled"].append({"name": nm, "ok": bool(res.get("ok")), "error": res.get("error")})
+            if all(d["ok"] for d in row["disabled"]):
+                rcon = registry.connect()
+                try:
+                    row["status"] = registry.set_status(rcon, s["id"], s["version"], "retired", note)
+                    verdict.record(rcon, s["id"], s["version"], "sim", r)
+                finally:
+                    rcon.close()
+        rows.append(row)
+    return json.dumps({"dry_run": dry_run, "decayed": rows}, indent=2)
 
 
 @mcp.tool()
