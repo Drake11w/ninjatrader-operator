@@ -63,15 +63,17 @@ This is the endpoint the README flags as needing confirmation (`Account.Strategi
 
 | Section | PASS / FAIL | Notes (field names that differ, wrong values, errors) |
 |---|---|---|
-| 1 Compile and start | | |
-| 2 Health | | |
-| 3 Accounts and positions | | |
-| 4 Orders | | |
-| 5 Executions | | |
-| 6 Strategies | | |
-| 7 Staleness and failure | | |
+| 1 Compile and start | PASS | user-reported 2026-11-06, no field notes |
+| 2 Health | PASS | user-reported 2026-11-06, no field notes |
+| 3 Accounts and positions | PASS | user-reported 2026-11-06, no field notes |
+| 4 Orders | PASS | user-reported 2026-11-06, no field notes |
+| 5 Executions | PASS | user-reported 2026-11-06, no field notes |
+| 6 Strategies | PASS | user-reported 2026-11-06, no field notes |
+| 7 Staleness and failure | PASS | user-reported 2026-11-06, no field notes |
 
 ## 9. What happens with the results
 - Any FAIL or wrong value is a bug to fix in the Operator add-on before the supervisor consumes that field.
 - Observed `state` values, the disabled-strategy behavior and the timezone of timestamps go into the supervisor data contract (Phase 0 doc, section 4).
 - Gate 1 (incident detection under real failures) starts only after this gate passes.
+
+**Status 2026-11-06:** all sections reported PASS by the user. Not recorded: the exact `state` values seen in `/strategies` and what a manually disabled strategy looks like. Those must be captured before the strategy checks are treated as verified.
