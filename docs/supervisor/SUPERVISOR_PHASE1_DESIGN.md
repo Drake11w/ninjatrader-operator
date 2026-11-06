@@ -144,3 +144,16 @@ Still open:
 3. `sup_fetch.py` + fake add-on tests.
 4. `sup_daemon.py`, alerts, heartbeat.
 5. Gate 0 then Gate 1 on Sim101.
+
+## 11. Added after the first build: performance and behavior drift (warning level only)
+
+`sup_perf.py` + `sup_behavior.py`, run by the daemon every 5 minutes (cached in between, previous findings kept if a refresh cannot judge anything). All findings are severity 1 and never trigger an action.
+
+| Key | Condition |
+|---|---|
+| `performance_drift` | the Operator's verdict engine reports `edge_decayed` or `reject` for the spec (recommendation text kept as evidence only; nothing is disabled or recorded) |
+| `trade_pace` | trades since activation are far below or above the backtest rate (two-sided Poisson test, alpha 0.01, needs at least 5 expected trades) |
+| `holding_time_shift` | holding times fall outside the backtest's 1st-99th percentile band more often than chance (binomial, p < 0.001, needs 15 sim and 30 backtest trades) |
+| `fills_unpairable` | fills in the journal have no action, so trades cannot be rebuilt; the other checks are suppressed for that spec |
+
+The sync writes new fills from GET /executions into the local journal (same as the dashboard). Known limit: the add-on emits an empty `action` for executions whose `Order` object is gone (for example fills from before an NT restart), which `trades.py` cannot pair. A fix in the add-on (derive the action from `Execution.MarketPosition` plus entry/exit) is not made or compiled.

@@ -17,11 +17,13 @@ import sup_alerts
 import sup_checks
 import sup_fetch
 import sup_incidents
+import sup_perf
 import sup_profile
 
 INTERVAL = 10
 HEARTBEAT_STALE = 60
 DISABLE_WINDOW = timedelta(minutes=10)
+PERF_INTERVAL = 300  # seconds between performance/behavior checks; findings are cached between runs
 
 
 def recent_disables(now, audit=None) -> set:
@@ -40,12 +42,31 @@ def recent_disables(now, audit=None) -> set:
     return out
 
 
-def run_once(con, profiles, obs=None, now=None, audit=None) -> list:
-    """One cycle. Returns the incident events it produced."""
+def perf_findings(con, profiles, now, collect) -> list:
+    """Performance/behavior findings, refreshed every PERF_INTERVAL seconds and cached in between so incidents
+    do not flap. If a refresh could not judge anything (or failed), the previous findings are kept, not cleared."""
+    cache = sup_incidents.get_state(con, "perf_cache", None)
+    if cache and (now - datetime.fromisoformat(cache["at"])).total_seconds() < PERF_INTERVAL:
+        return cache["findings"]
+    prev = cache["findings"] if cache else []
+    try:
+        res = collect(profiles, now)
+    except Exception as e:
+        res = {"findings": None, "skipped": f"error: {e}"}
+    found = prev if res.get("findings") is None else res["findings"]
+    sup_incidents.set_state(con, "perf_cache", {"at": now.isoformat(), "findings": found,
+                                                "skipped": res.get("skipped"), "notes": res.get("notes", [])})
+    return found
+
+
+def run_once(con, profiles, obs=None, now=None, audit=None, perf_collect=None) -> list:
+    """One cycle. Returns the incident events it produced. perf_collect=None skips performance checks."""
     now = now or datetime.now(timezone.utc)
     obs = obs or sup_fetch.observe()
     state = sup_incidents.get_state(con, "check_state", {})
     findings, state = sup_checks.evaluate(obs, profiles, state, now, recent_disables(now, audit))
+    if perf_collect is not None and sup_checks.data_current(obs, now):
+        findings += perf_findings(con, profiles, now, perf_collect)
     events = sup_incidents.apply_findings(con, findings, now, allow_resolve=sup_checks.data_current(obs, now))
     sup_incidents.set_state(con, "check_state", state)
     for iid in sup_alerts.notify(events):
@@ -87,7 +108,7 @@ def main(argv) -> int:
     while True:
         t0 = time.monotonic()
         try:
-            run_once(con, profiles)
+            run_once(con, profiles, perf_collect=sup_perf.collect)
         except Exception as e:  # keep running; the heartbeat going stale is how a stuck daemon is noticed
             print(f"cycle error: {e}", file=sys.stderr)
         if "--once" in argv:
