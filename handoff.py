@@ -224,7 +224,7 @@ def conflicts(spec: dict, running: list) -> list:
             if any(c and (c in s.get("name", "")) for c in bad)]
 
 
-def enable_spec(spec: dict, account: str, post, fetch, today: date = None, skip_defaults: bool = False) -> dict:
+def enable_spec(spec: dict, account: str, post, fetch, today: date = None, skip_defaults: bool = True) -> dict:
     """Start every leg on `account` through the add-on. `post(path, params, body)` and `fetch(path)` are injected.
     All-or-nothing: if a leg fails, the legs already started are disabled again."""
     reqs = enable_requests(spec, today)
