@@ -46,6 +46,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             public string LastResult = "waiting";
         }
         private readonly Dictionary<string, RecoveryCandidate> recoveryCandidates = new Dictionary<string, RecoveryCandidate>();
+        private readonly Dictionary<string, RecoveryCandidate> lastKnownRunning = new Dictionary<string, RecoveryCandidate>();
         private string recoveryLastEvent = "not started";
         private DateTime recoveryLastEventUtc = DateTime.UtcNow;
 
@@ -996,27 +997,40 @@ namespace NinjaTrader.NinjaScript.AddOns
                     foreach (Account a in Account.All)
                     {
                         bool ready = AccountConnectionReady(a);
-                        if (!ready)
+                        lock (a.Strategies)
                         {
-                            lock (a.Strategies)
-                                foreach (StrategyBase st in a.Strategies)
+                            foreach (StrategyBase st in a.Strategies)
+                            {
+                                if (st == null) continue;
+                                string key = a.Name + "|" + st.Name;
+                                if (ready && st.State.ToString() == "Realtime" && RecoveryEnabled(a, st))
                                 {
-                                    if (st == null || st.State.ToString() != "Realtime" || !RecoveryEnabled(a, st)) continue;
-                                    string key = a.Name + "|" + st.Name;
+                                    // Keep a short-lived snapshot while healthy, so a fast disconnect that
+                                    // terminates the strategy before the next poll is still recoverable.
+                                    lock (recoveryLock)
+                                        lastKnownRunning[key] = new RecoveryCandidate {
+                                            Account = a, Strategy = st,
+                                            Instrument = st.Instrument == null ? "" : st.Instrument.FullName,
+                                            FirstDisconnectedUtc = now, LastResult = "last observed running while connected"
+                                        };
+                                }
+                                else if (!ready)
+                                {
+                                    RecoveryCandidate prior = null;
                                     lock (recoveryLock)
                                     {
-                                        if (!recoveryCandidates.ContainsKey(key))
+                                        if (lastKnownRunning.TryGetValue(key, out prior) && !recoveryCandidates.ContainsKey(key))
                                         {
                                             recoveryCandidates[key] = new RecoveryCandidate {
-                                                Account = a, Strategy = st,
-                                                Instrument = st.Instrument == null ? "" : st.Instrument.FullName,
-                                                FirstDisconnectedUtc = now, LastResult = "captured before/during connection loss"
+                                                Account = prior.Account, Strategy = prior.Strategy, Instrument = prior.Instrument,
+                                                FirstDisconnectedUtc = now, LastResult = "captured from last healthy running snapshot"
                                             };
                                             recoveryLastEvent = "captured " + key;
                                             recoveryLastEventUtc = now;
                                         }
                                     }
                                 }
+                            }
                         }
                     }
                 }
