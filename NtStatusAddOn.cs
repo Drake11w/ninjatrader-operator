@@ -1020,24 +1020,25 @@ namespace NinjaTrader.NinjaScript.AddOns
                                         else lastKnownRunning.Remove(key); // deliberate stop while healthy is never restored
                                     }
                                 }
-                                else
-                                {
-                                    RecoveryCandidate prior = null;
-                                    lock (recoveryLock)
-                                    {
-                                        if (lastKnownRunning.TryGetValue(key, out prior) && !recoveryCandidates.ContainsKey(key))
-                                        {
-                                            recoveryCandidates[key] = new RecoveryCandidate {
-                                                Account = prior.Account, Strategy = prior.Strategy, Instrument = prior.Instrument,
-                                                FirstDisconnectedUtc = now, LastResult = "captured from last healthy running snapshot"
-                                            };
-                                            recoveryLastEvent = "captured " + key;
-                                            recoveryLastEventUtc = now;
-                                        }
-                                    }
-                                }
+                                // While disconnected, candidates are copied from the last healthy snapshot
+                                // below, including strategies already removed from Account.Strategies.
                             }
                         }
+                    }
+                    if (!ready)
+                    {
+                        lock (recoveryLock)
+                            foreach (var priorPair in lastKnownRunning.Where(x => x.Value.Account.Name == a.Name).ToList())
+                            {
+                                if (recoveryCandidates.ContainsKey(priorPair.Key)) continue;
+                                RecoveryCandidate prior = priorPair.Value;
+                                recoveryCandidates[priorPair.Key] = new RecoveryCandidate {
+                                    Account = prior.Account, Strategy = prior.Strategy, Instrument = prior.Instrument,
+                                    FirstDisconnectedUtc = now, LastResult = "captured from last healthy running snapshot"
+                                };
+                                recoveryLastEvent = "captured " + priorPair.Key;
+                                recoveryLastEventUtc = now;
+                            }
                     }
                 }
 
