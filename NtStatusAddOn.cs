@@ -1003,18 +1003,24 @@ namespace NinjaTrader.NinjaScript.AddOns
                             {
                                 if (st == null) continue;
                                 string key = a.Name + "|" + st.Name;
-                                if (ready && st.State.ToString() == "Realtime" && RecoveryEnabled(a, st))
+                                if (ready)
                                 {
-                                    // Keep a short-lived snapshot while healthy, so a fast disconnect that
-                                    // terminates the strategy before the next poll is still recoverable.
                                     lock (recoveryLock)
-                                        lastKnownRunning[key] = new RecoveryCandidate {
-                                            Account = a, Strategy = st,
-                                            Instrument = st.Instrument == null ? "" : st.Instrument.FullName,
-                                            FirstDisconnectedUtc = now, LastResult = "last observed running while connected"
-                                        };
+                                    {
+                                        if (st.State.ToString() == "Realtime" && RecoveryEnabled(a, st))
+                                        {
+                                            // Keep a short-lived snapshot while healthy, so a fast disconnect that
+                                            // terminates the strategy before the next poll is still recoverable.
+                                            lastKnownRunning[key] = new RecoveryCandidate {
+                                                Account = a, Strategy = st,
+                                                Instrument = st.Instrument == null ? "" : st.Instrument.FullName,
+                                                FirstDisconnectedUtc = now, LastResult = "last observed running while connected"
+                                            };
+                                        }
+                                        else lastKnownRunning.Remove(key); // deliberate stop while healthy is never restored
+                                    }
                                 }
-                                else if (!ready)
+                                else
                                 {
                                     RecoveryCandidate prior = null;
                                     lock (recoveryLock)
