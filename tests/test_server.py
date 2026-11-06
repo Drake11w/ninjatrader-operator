@@ -52,6 +52,7 @@ class ServerTests(unittest.TestCase):
         os.environ["NT_ADDON_URL"] = f"http://127.0.0.1:{cls.httpd.server_port}"
         import server
         cls.s = server
+        server.BASE = os.environ["NT_ADDON_URL"]  # server.py reads the URL at import; another test may have imported it first
 
     @classmethod
     def tearDownClass(cls):
