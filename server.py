@@ -504,15 +504,14 @@ def install_handoff(path: str, apply: bool = False) -> str:
 
 
 @mcp.tool()
-def enable_strategy(id: str, version: str, account: str, reason: str = "", skip_defaults: bool = False) -> str:
-    """EXPERIMENTAL. Start every leg of a registered strategy version on a Sim account through the add-on (the same
-    internal routines as the Strategies tab). Requires: registry status backtest or sim, a Sim*/allow-listed account,
-    NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment, the scripts compiled, no conflicting strategy on the
-    account. All legs or none. On success a 'backtest' spec moves to 'sim'. Logged to the audit log."""
+def enable_strategy(id: str, version: str, account: str, reason: str = "", skip_defaults: bool = True) -> str:
+    """EXPERIMENTAL. Start every leg of a registered strategy version on a Sim account only. Requires registry status
+    backtest or sim, NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment, compiled scripts, and no conflicts.
+    All legs or none. On success a 'backtest' spec moves to 'sim'. Logged to the audit log."""
     rcon = registry.connect()
     row = registry.get_spec(rcon, id, version)
     params = {"id": id, "version": version, "account": account}
-    refusal = control.check_account(account)
+    refusal = None if account.lower().startswith("sim") else "enable_strategy is Sim-only; use deploy_strategy_live_small for an approved live-small deployment"
     if not refusal and "error" in row:
         refusal = row["error"]
     if not refusal and row.get("status") not in ("backtest", "sim"):
@@ -528,9 +527,53 @@ def enable_strategy(id: str, version: str, account: str, reason: str = "", skip_
     return json.dumps(result, indent=2)
 
 
+def _check_live_small_deployment(account: str, status: str):
+    """Dedicated two-sided live-small gate; broad live unlocks never satisfy it."""
+    if status != "live-small":
+        return f"strategy status must be exactly 'live-small' (currently '{status}')"
+    if account and account.lower().startswith("sim"):
+        return "deploy_strategy_live_small is for real accounts; use enable_strategy for Sim accounts"
+    if os.environ.get("NT_OPERATOR_ALLOW_LIVE_SMALL") != "1":
+        return "live-small deployment locked: set NT_OPERATOR_ALLOW_LIVE_SMALL=1 in the MCP server environment"
+    allowed = [a.strip() for a in os.environ.get("NT_OPERATOR_LIVE_SMALL_ACCOUNTS", "").split(",") if a.strip()]
+    if not account or account not in allowed:
+        return f"account '{account}' is not in the exact NT_OPERATOR_LIVE_SMALL_ACCOUNTS allowlist"
+    if os.environ.get("NT_OPERATOR_ALLOW_STRATEGY_START") != "1":
+        return "strategy start is locked: set NT_OPERATOR_ALLOW_STRATEGY_START=1 in the MCP server environment"
+    if not os.environ.get("NT_OPERATOR_TOKEN"):
+        return "live-small deployment requires NT_OPERATOR_TOKEN to be set in both the MCP server and NinjaTrader environments"
+    return None
+
+
+@mcp.tool()
+def deploy_strategy_live_small(id: str, version: str, account: str, reason: str = "") -> str:
+    """EXPERIMENTAL LIVE ACTION. Start a registered live-small strategy on one exact allow-listed real account.
+    Requires NT_OPERATOR_ALLOW_LIVE_SMALL=1, NT_OPERATOR_ALLOW_STRATEGY_START=1, and exact account membership in
+    NT_OPERATOR_LIVE_SMALL_ACCOUNTS. The NinjaTrader add-on independently enforces the same live-small gate.
+    All legs or none; no automatic stage promotion. Strategy sizing is not a broker-side loss limit."""
+    rcon = registry.connect()
+    try:
+        row = registry.get_spec(rcon, id, version)
+        refusal = row.get("error") if "error" in row else _check_live_small_deployment(account, row.get("status"))
+        approval = registry.get_approval(rcon, id, version) if "error" not in row else None
+        if not refusal and not (approval and approval.get("approved")):
+            refusal = "recorded handoff approval is missing or false; install an approved handoff bundle before live-small deployment"
+        if not refusal and not reason.strip():
+            refusal = "a non-empty deployment reason is required and will be written to the audit log"
+        params = {"id": id, "version": version, "account": account}
+        if refusal:
+            result = {"ok": False, "error": refusal}
+        else:
+            result = handoff.enable_spec(row["spec"], account, lambda p, q, b: _post(p, q, b), _fetch, skip_defaults=True)
+        control.audit("deploy_strategy_live_small", params, result, reason)
+        return json.dumps(result, indent=2)
+    finally:
+        rcon.close()
+
+
 @mcp.tool()
 def disable_strategy(account: str, name: str, reason: str = "") -> str:
-    """Disable and stop one strategy instance by its name on a Sim account (names look like '<id> <version> <leg>').
+    """Disable and stop one strategy instance on Sim or an allow-listed live-small account (names look like '<id> <version> <leg>').
     Does not flatten: use flatten if it holds a position. Logged."""
     return _control("disable_strategy", "/strategy/disable", {"account": account, "name": name}, reason)
 

@@ -145,6 +145,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             return false;
         }
 
+        // Strategy starts on real accounts require a separate, exact live-small allowlist and unlock.
+        // NT_OPERATOR_ALLOW_LIVE is intentionally not accepted here.
+        private static bool LiveSmallStrategyAccountAllowed(string name)
+        {
+            if (Environment.GetEnvironmentVariable("NT_OPERATOR_ALLOW_LIVE_SMALL") != "1") return false;
+            string list = Environment.GetEnvironmentVariable("NT_OPERATOR_LIVE_SMALL_ACCOUNTS");
+            if (string.IsNullOrEmpty(list)) return false;
+            foreach (string part in list.Split(','))
+                if (part.Trim() == name) return true;
+            return false;
+        }
+
         private static Account FindAccount(string name)
         {
             lock (Account.All)
@@ -209,7 +221,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             string name = ctx.Request.QueryString["account"];
             string instrument = ctx.Request.QueryString["instrument"];
             if (string.IsNullOrEmpty(name)) { code = 400; return Err("account is required"); }
-            if (!AccountAllowed(name)) { code = 403; return Err("account '" + name + "' is not a Sim* account or in NT_OPERATOR_ALLOWED_ACCOUNTS; live control is locked"); }
+            bool strategyPath = path == "/strategy/enable" || path == "/strategy/disable";
+            bool simAccount = name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase);
+            bool accountAllowed = strategyPath
+                ? (simAccount || LiveSmallStrategyAccountAllowed(name))
+                : AccountAllowed(name);
+            if (!accountAllowed) { code = 403; return Err(strategyPath
+                ? "strategy start/stop requires a Sim* account or NT_OPERATOR_ALLOW_LIVE_SMALL=1 plus exact NT_OPERATOR_LIVE_SMALL_ACCOUNTS membership"
+                : "account '" + name + "' is not a Sim* account or in NT_OPERATOR_ALLOWED_ACCOUNTS; live control is locked"); }
             Account a = FindAccount(name);
             if (a == null) { code = 404; return Err("unknown account '" + name + "'"); }
 
@@ -301,6 +320,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             code = 200;
             if (!StrategyStartAllowed()) { code = 403; return Err("strategy start is locked: set NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment"); }
+            if (!a.Name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NT_OPERATOR_TOKEN")))
+            { code = 403; return Err("live-small strategy start requires NT_OPERATOR_TOKEN in both the MCP server and NinjaTrader environments"); }
             string cls = ctx.Request.QueryString["class"], name = ctx.Request.QueryString["name"], instrument = ctx.Request.QueryString["instrument"];
             if (string.IsNullOrEmpty(cls) || string.IsNullOrEmpty(name) || string.IsNullOrEmpty(instrument)) { code = 400; return Err("class, name and instrument are required"); }
             Type type = FindStrategyType(cls);

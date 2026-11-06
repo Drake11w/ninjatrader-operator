@@ -113,7 +113,7 @@ class EnableTests(unittest.TestCase):
             return {"strategies": state["strategies"]}
 
         def post(path, params, body):
-            calls.append((path, params["name"] if "name" in params else None))
+            calls.append((path, params["name"] if "name" in params else None, dict(params)))
             if path == "/strategy/enable":
                 if params["class"] == fail_on:
                     return {"ok": False, "error": "boom"}
@@ -126,6 +126,14 @@ class EnableTests(unittest.TestCase):
         r = handoff.enable_spec(EXAMPLE, "Sim101", post, fetch, date(2026, 11, 6))
         self.assertTrue(r["ok"], r)
         self.assertEqual(len(r["verified_states"]), 2)
+
+    def test_skip_defaults_is_sent_for_every_leg_by_default(self):
+        calls, post, fetch = self.fakes()
+        r = handoff.enable_spec(EXAMPLE, "Sim101", post, fetch, date(2026, 11, 6))
+        self.assertTrue(r["ok"], r)
+        enables = [c for c in calls if c[0] == "/strategy/enable"]
+        self.assertEqual(len(enables), 2)
+        self.assertTrue(all(c[2].get("skip_defaults") == "1" for c in enables))
 
     def test_failure_rolls_back_earlier_legs(self):
         calls, post, fetch = self.fakes(fail_on="PlaceholderLegB")
