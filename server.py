@@ -539,6 +539,8 @@ def _check_live_small_deployment(account: str, status: str):
         return f"account '{account}' is not in the exact NT_OPERATOR_LIVE_SMALL_ACCOUNTS allowlist"
     if os.environ.get("NT_OPERATOR_ALLOW_STRATEGY_START") != "1":
         return "strategy start is locked: set NT_OPERATOR_ALLOW_STRATEGY_START=1 in the MCP server environment"
+    if not os.environ.get("NT_OPERATOR_TOKEN"):
+        return "live-small deployment requires NT_OPERATOR_TOKEN to be set in both the MCP server and NinjaTrader environments"
     return None
 
 
