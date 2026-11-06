@@ -17,17 +17,17 @@ and needs to be reconciled with the real system's strategy format and metrics.
 - [x] Executions: fills with time, price, entry/exit, strategy name (source of truth for trade logs)
 - [x] (needs NT8 compile check) Strategy status: enabled/disabled, which chart/instrument, current position, last signal
 - [x] Connection health: connected/disconnected, data feed status, add-on heartbeat
-- [ ] Session/market info: current session, time to RTH open/close, front-month contract roll
+- [x] Session/market info (`get_session_info`): current session, time to RTH open/close, front-month contract roll (holidays and early closes not modelled)
 
 ## Phase 2 - Record and analyze (still read-only)
 - [x] Trade journal: persist every execution to SQLite (survives NT restarts), tagged by strategy + version (call `sync_journal` periodically; auto-sync not built)
 - [x] Round-trip trade builder: FIFO pairing into trades with duration and net P&L (`get_trades`); MAE/MFE and slippage vs signal price still need bar/signal data from the add-on
 - [x] Performance tools (`get_performance`): net P&L, win rate, expectancy, profit factor, avg win/loss, max drawdown, daily Sharpe/Sortino,
       by weekday, entry hour, month. Still open: by regime (needs the regime state below)
-- [ ] Prop-firm rule tracker: daily loss limit, trailing drawdown, profit target, consistency rule,
-      distance-to-breach in dollars; alert thresholds (put the real Lucid rule values in config)
+- [x] Prop-firm rule tracker (`get_rule_status`): daily loss limit, trailing drawdown (EOD or intraday, optional lock), profit target, consistency rule,
+      distance-to-breach in dollars, ok/warning/breach thresholds. Closed-trade basis (optional unrealized). Needs real Lucid values in the rules file; push alerts not built
 - [ ] Regime state: expose the system's regime classification (trend/range/high-vol) alongside each trade
-- [ ] Daily/weekly report generator (markdown/HTML) that Claude can read or send
+- [x] Daily/weekly report generator (`get_report`, markdown; HTML and sending not built)
 
 ## Phase 3 - Strategy evaluation bridge (the core of the integration)
 - [ ] Shared strategy spec: one JSON/YAML schema (id, version, instrument, session, entry/exit rules,

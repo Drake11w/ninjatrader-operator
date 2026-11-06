@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from mcp.server.mcpserver import MCPServer
 
 import journal
+import report
+import rules
+import sessions
 import trades
 
 BASE = os.environ.get("NT_ADDON_URL", "http://127.0.0.1:8765")
@@ -154,6 +157,69 @@ def _trade_report(account, strategy, since, point_values, summary_only):
         out = {"count": len(built["trades"]), "trades": built["trades"], "open_positions": built["open"]}
     out["warnings"] = built["warnings"]
     return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+def get_rule_status(account: str = "", strategy: str = "", include_unrealized: bool = False) -> str:
+    """Prop-firm rule tracker: distance in dollars to the daily loss limit, trailing drawdown floor, profit target
+    and consistency rule, with ok/warning/breach status. Uses closed trades from the journal (run sync_journal
+    first); set include_unrealized to add current open P&L from NinjaTrader. Rule values come from the rules file
+    (NT_RULES_FILE or ~/.ninjatrader-operator/rules.json; see rules.example.json)."""
+    try:
+        cfg = rules.load_rules()
+    except (OSError, ValueError) as e:
+        return json.dumps({"error": str(e)})
+    unrealized = 0.0
+    if include_unrealized:
+        data = _fetch("/status")
+        if "error" in data:
+            return json.dumps(data)
+        unrealized = sum(a.get("unrealized_pnl") or 0 for a in data.get("accounts", [])
+                         if not account or a.get("name") == account)
+    con = journal.connect()
+    try:
+        rows = journal.query(con, account, strategy, "", 5000)
+    finally:
+        con.close()
+    built = trades.build_trades(rows)
+    out = rules.evaluate(built["trades"], cfg, unrealized=unrealized)
+    out["warnings"] += built["warnings"]
+    return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+def get_report(period: str = "day", date: str = "", account: str = "", strategy: str = "") -> str:
+    """Markdown trading report for a day or week (period "day" or "week"; `date` is a trading day like 2026-11-05,
+    default today). Includes summary, trades, open positions and, if a rules file exists, prop-rule status."""
+    if period not in ("day", "week"):
+        return json.dumps({"error": 'period must be "day" or "week"'})
+    try:
+        cfg = rules.load_rules()
+    except (OSError, ValueError):
+        cfg = None
+    con = journal.connect()
+    try:
+        rows = journal.query(con, account, strategy, "", 5000)
+    finally:
+        con.close()
+    built = trades.build_trades(rows)
+    try:
+        return report.build_report(built["trades"], built["open"], period, date, cfg,
+                                   tz_name=(cfg or {}).get("timezone", "America/New_York"),
+                                   start_hour=(cfg or {}).get("session_start_hour", 18))
+    except ValueError:
+        return json.dumps({"error": "date must look like 2026-11-05"})
+
+
+@mcp.tool()
+def get_session_info(instrument: str = "") -> str:
+    """Current market session (RTH, Globex overnight, maintenance break, weekend), time to the next RTH open or
+    close, and the front-month futures contract with its roll date. Pass an instrument like "MNQ 12-26" to check
+    it is the front month. Computed locally; exchange holidays are not modelled."""
+    try:
+        return json.dumps(sessions.session_info(instrument=instrument), indent=2)
+    except Exception as e:  # missing tz database etc.
+        return json.dumps({"error": f"{type(e).__name__}: {e} (on Windows, pip install tzdata)"})
 
 
 @mcp.tool()
