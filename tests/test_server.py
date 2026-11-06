@@ -139,6 +139,7 @@ class ServerTests(unittest.TestCase):
             os.environ["NT_OPERATOR_TOKEN"] = "test-secret"
             self.assertIsNone(check("LiveAcct", "live-small"))
             self.assertIsNotNone(check("LiveAcct", "sim"))
+            self.assertIsNotNone(check("Sim101", "live-small"))
             self.assertIsNotNone(check("LiveAcct ", "live-small"))
             del os.environ["NT_OPERATOR_ALLOW_STRATEGY_START"]
             self.assertIsNotNone(check("LiveAcct", "live-small"))
