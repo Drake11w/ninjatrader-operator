@@ -82,7 +82,9 @@ def evaluate(trades: list, rules: dict, now: datetime = None, unrealized: float 
                 running += by_day[day]
                 peak = max(peak, running)
         floor = peak - amount
-        if dd.get("lock_at_start", True):
+        if dd.get("lock_floor") is not None:  # absolute balance the floor stops rising at (LucidFlex 50K: 50100)
+            floor = min(floor, float(dd["lock_floor"]))
+        elif dd.get("lock_at_start", True):
             floor = min(floor, start)
         current = balance + unrealized
         out["rules"]["trailing_drawdown"] = {

@@ -1,0 +1,49 @@
+{
+  "_note": "EXAMPLE ONLY: every rule, number and script name here is a made-up placeholder, not a real strategy.",
+  "schema_version": 2,
+  "id": "two-leg-mnq",
+  "version": "1.0.0",
+  "lucid_id": "S123",
+  "name": "Placeholder two-leg MNQ strategy",
+  "hypothesis": "PLACEHOLDER: why each leg should have positive expectancy after costs, and the caveats (how it was found, which periods it was tested on).",
+  "source": {"system": "lucid", "ref": "PLACEHOLDER"},
+  "timezone": "America/Chicago",
+  "instrument": {"root": "MNQ", "contract_policy": "front", "bar": {"type": "minute", "value": 1}},
+  "legs": [
+    {
+      "name": "leg-a-open-long",
+      "days": ["mon"],
+      "side": "long",
+      "session": {"entry_start": "08:30", "entry_end": "08:30", "flat_by": "15:40"},
+      "gates": [{"type": "skip_event_days", "description": "PLACEHOLDER: stand aside on scheduled high-impact news days."}],
+      "entry": {"max_trades_per_day": 1,
+                "rules": [{"type": "market_at_open", "description": "Buy at the regular-session open."}]},
+      "exit": {"stop": {"type": "atr_multiple", "value": 1.0},
+               "rules": [{"type": "time_exit", "description": "Flat at the flat_by time. No profit target."}]},
+      "sizing": {"contracts": 1, "max_contracts": 1},
+      "ninjascript": {"class": "PlaceholderLegA", "file": "execution/PlaceholderLegA.cs",
+                      "inputs": {"Contracts": 1, "StopAtrMultiple": 1.0, "UseSkipEventDays": true}}
+    },
+    {
+      "name": "leg-b-range-breakout",
+      "days": ["tue", "wed", "thu", "fri"],
+      "side": "long",
+      "session": {"entry_start": "09:00", "entry_end": "11:00", "flat_by": "14:55"},
+      "gates": [{"type": "skip_wide_prior_day", "description": "PLACEHOLDER: skip if yesterday's range was unusually wide.",
+                 "params": {"ratio": 1.5, "lookback": 20}}],
+      "entry": {"max_trades_per_day": 1,
+                "rules": [{"type": "range_breakout",
+                           "description": "Opening range = first 30 minutes. Buy-stop 1 tick above its high.",
+                           "params": {"range_minutes": 30, "trigger_ticks": 1}}]},
+      "exit": {"stop": {"type": "structure", "value": 1},
+               "rules": [{"type": "time_exit", "description": "Stop 1 tick below the range low. No target. Flat at flat_by."}]},
+      "sizing": {"contracts": 1, "max_contracts": 1},
+      "ninjascript": {"class": "PlaceholderLegB", "file": "execution/PlaceholderLegB.cs",
+                      "inputs": {"Contracts": 1, "RangeMinutes": 30, "UseSkipWidePriorDay": true}}
+    }
+  ],
+  "costs": {"commission_per_side": 0.62, "slippage_ticks": 2},
+  "backtest": {"start": "2020-01-01", "end": "2026-01-01"},
+  "expected_metrics": {"min_trades": 500, "net_per_year": 3000, "max_drawdown": 2000,
+                       "eval_pass": 0.5, "eval_fail": 0.2, "eval_sessions_to_pass": 120, "chain_odds": 0.4}
+}

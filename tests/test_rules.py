@@ -41,6 +41,22 @@ class RuleTests(unittest.TestCase):
         t = r["rules"]["trailing_drawdown"]
         self.assertEqual((t["floor"], t["distance"]), (50000.0, 4000.0))  # locked at starting balance
 
+    def test_lock_floor_absolute(self):
+        cfg = {**RULES, "trailing_drawdown": {"amount": 2000, "mode": "eod", "lock_floor": 50100}}
+        r = rules.evaluate([trade("2026-11-03", 4000)], cfg, at("2026-11-05"))
+        t = r["rules"]["trailing_drawdown"]
+        self.assertEqual((t["floor"], t["distance"]), (50100.0, 3900.0))  # floor stops rising at 50,100
+        r = rules.evaluate([trade("2026-11-03", 1000)], cfg, at("2026-11-05"))
+        self.assertEqual(r["rules"]["trailing_drawdown"]["floor"], 49000.0)  # still trailing below the lock
+
+    def test_example_rules_file_loads(self):
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rules.example.json")
+        cfg = rules.load_rules(path)
+        self.assertEqual(cfg["trailing_drawdown"]["lock_floor"], 50100)
+        self.assertNotIn("daily_loss_limit", cfg)
+        r = rules.evaluate([], cfg, at("2026-11-05"))
+        self.assertEqual(r["rules"]["trailing_drawdown"]["floor"], 48000.0)
+
     def test_today_does_not_raise_eod_peak(self):
         r = rules.evaluate([trade("2026-11-05", 1500)], RULES, at("2026-11-05"))
         self.assertEqual(r["rules"]["trailing_drawdown"]["peak_balance"], 50000.0)

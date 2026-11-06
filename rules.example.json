@@ -1,11 +1,10 @@
 {
-  "_note": "PLACEHOLDER numbers. Replace with your firm's real rules, then copy to ~/.ninjatrader-operator/rules.json (or set NT_RULES_FILE).",
+  "_note": "LucidFlex 50K evaluation as modelled in lucid-trading-system CLAUDE.md (target 3000, 2000 EOD trailing drawdown locking at 50100, 50% consistency). No daily loss limit is listed there, so none is set. Confirm against your Lucid account terms, then copy to ~/.ninjatrader-operator/rules.json (or set NT_RULES_FILE). Flat-by 15:45 CT is not tracked here.",
   "starting_balance": 50000,
   "profit_target": 3000,
-  "daily_loss_limit": 1100,
-  "trailing_drawdown": {"amount": 2000, "mode": "eod", "lock_at_start": true},
+  "trailing_drawdown": {"amount": 2000, "mode": "eod", "lock_floor": 50100},
   "consistency_pct": 0.5,
   "warn_at": 0.8,
-  "timezone": "America/New_York",
-  "session_start_hour": 18
+  "timezone": "America/Chicago",
+  "session_start_hour": 17
 }
