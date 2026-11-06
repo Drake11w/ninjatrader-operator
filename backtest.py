@@ -4,6 +4,9 @@ Two export shapes are understood (detected from the header, column names matched
   * Trades grid  (needs "Entry time", "Exit time", "Profit"; uses Market pos., Qty, prices, names, Commission,
                   Cum. net profit when present)
   * Periods grid with Period = Day (needs "Period", "Net profit")
+  * Backtests list grid, one summary row per run (Instrument, Backtest type, Date, Strategy, Start date, End date,
+    Total net profit, Total # of trades). Only net profit and trade count, so no drawdown or daily comparison;
+    import_run picks the latest plain "Backtest" row per leg of the spec.
 Numbers are read in US format ("$1,234.50", "($12.00)"). Non-US decimal commas are not supported. Timestamps are
 read in `export_timezone` (the time zone of the PC / chart that produced the export), default the spec's.
 
@@ -132,6 +135,29 @@ def parse(text: str, export_tz: str) -> dict:
         warnings.append(f"timestamps read as {export_tz}; daily buckets use the exit date as exported")
         return {"kind": "trades", "trades": sorted(out, key=lambda t: t["entry_time"]),
                 "daily": {d: round(v, 2) for d, v in sorted(daily.items())}, "warnings": warnings}
+    if {"instrument", "backtest type", "date", "strategy", "start date", "end date", "total net profit",
+            "total # of trades"} <= set(fields):
+        runs, skipped = [], 0
+        for r in rows:
+            if r["backtest type"].lower() != "backtest":  # optimisation rows (and their shifted columns) are skipped
+                skipped += 1
+                continue
+            when, st, en = _dt(r["date"]), _dt(r["start date"]), _dt(r["end date"])
+            net, n = _num(r["total net profit"]), _num(r["total # of trades"])
+            if None in (when, st, en, net, n):
+                skipped += 1
+                continue
+            runs.append({"instrument": r["instrument"], "root": (r["instrument"].split() or [""])[0].upper(),
+                         "strategy": r["strategy"], "run_date": when.strftime("%Y-%m-%dT%H:%M:%S"),
+                         "start": st.date().isoformat(), "end": en.date().isoformat(),
+                         "net_pnl": round(net, 2), "trades": int(n)})
+        if not runs:
+            return {"error": "no plain Backtest rows found in the Backtests list"}
+        if skipped:
+            warnings.append(f"{skipped} optimisation or unreadable row(s) skipped")
+        warnings.append("Backtests list has only net profit and trade count per run: no drawdown, win rate or "
+                        "day-by-day data. Costs are whatever the Analyzer settings were for that run (not in the file)")
+        return {"kind": "summary", "runs": runs, "trades": [], "daily": {}, "warnings": warnings}
     if {"period", "net profit"} <= set(fields):
         daily, bad = defaultdict(float), 0
         for r in rows:
@@ -150,8 +176,8 @@ def parse(text: str, export_tz: str) -> dict:
         warnings.append("Periods export has no individual trades: trade-level metrics and leg filters are unavailable")
         return {"kind": "periods", "trades": [], "daily": {d: round(v, 2) for d, v in sorted(daily.items())},
                 "warnings": warnings}
-    return {"error": "unrecognised CSV. Expected the Strategy Analyzer Trades grid (Entry time, Exit time, Profit, ...) "
-                     "or the Periods grid with Period = Day (Period, Net profit). Found columns: " + ", ".join(fields)}
+    return {"error": "unrecognised CSV. Expected the Strategy Analyzer Trades grid (Entry time, Exit time, Profit, ...), "
+                     "the Periods grid with Period = Day (Period, Net profit) or the Backtests list. Found columns: " + ", ".join(fields)}
 
 
 def _eod_drawdown(daily: dict) -> float:
@@ -188,6 +214,35 @@ def metrics(parsed: dict) -> dict:
     return m
 
 
+def select_runs(parsed: dict, spec: dict) -> dict:
+    """Latest plain Backtest row per leg (matched on ninjascript.class and instrument root) -> metrics for the spec."""
+    root, picked, missing = spec["instrument"]["root"].upper(), [], []
+    for leg in spec.get("legs", []):
+        cls = leg["ninjascript"]["class"]
+        cand = [r for r in parsed["runs"] if r["strategy"] == cls and r["root"] == root]
+        if cand:
+            picked.append(dict(max(cand, key=lambda r: r["run_date"]), leg=leg["name"]))
+        else:
+            missing.append(f"{leg['name']} ({cls} on {root})")
+    if missing:
+        return {"error": "no Backtest row for: " + ", ".join(missing)}
+    warnings = []
+    if len({(r["start"], r["end"]) for r in picked}) > 1:
+        warnings.append("legs were backtested over different periods; per-year figures are summed leg by leg")
+    m = {"start": min(r["start"] for r in picked), "end": max(r["end"] for r in picked), "legs": []}
+    net_year = trades_year = 0.0
+    for r in picked:
+        yrs = max((datetime.fromisoformat(r["end"]) - datetime.fromisoformat(r["start"])).days + 1, 1) / 365.25
+        net_year += r["net_pnl"] / yrs
+        trades_year += r["trades"] / yrs
+        m["legs"].append({"leg": r["leg"], "strategy": r["strategy"], "run_date": r["run_date"], "start": r["start"],
+                          "end": r["end"], "net_pnl": r["net_pnl"], "trades": r["trades"],
+                          "net_per_year": round(r["net_pnl"] / yrs, 2), "trades_per_year": round(r["trades"] / yrs, 1)})
+    m.update(net_pnl=round(sum(r["net_pnl"] for r in picked), 2), trades=sum(r["trades"] for r in picked),
+             net_per_year=round(net_year, 2), trades_per_year=round(trades_year, 1))
+    return {"metrics": m, "warnings": warnings}
+
+
 def claims_check(m: dict, spec: dict) -> dict:
     """Compare measured metrics to the spec's expected_metrics; only keys present in both are compared."""
     claims, rows = spec.get("expected_metrics", {}), {}
@@ -218,7 +273,13 @@ def import_run(con, spec: dict, text: str, label: str = "", source_name: str = "
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
     if "error" in parsed:
         return {"ok": False, "error": parsed["error"]}
-    m = metrics(parsed)
+    if parsed["kind"] == "summary":
+        sel = select_runs(parsed, spec)
+        if "error" in sel:
+            return {"ok": False, "error": sel["error"]}
+        m, parsed["warnings"] = sel["metrics"], parsed["warnings"] + sel["warnings"]
+    else:
+        m = metrics(parsed)
     cur = con.execute(
         "INSERT INTO backtest_runs (spec_id, version, label, kind, source_name, export_timezone, start, end,"
         " metrics_json, daily_json, trades_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -254,6 +315,9 @@ def list_runs(con, spec_id: str = "", version: str = "") -> list:
 
 def compare_to_journal(run: dict, spec: dict, journal_trades: list, leg: str = "", max_days: int = 20) -> dict:
     """Day-by-day: backtest P&L vs journaled (sim/live) P&L over the days the journal covers."""
+    if run["kind"] == "summary":
+        return {"error": "this run came from a Backtests list (summary only); import the Trades grid or the "
+                         "Periods grid (Period = Day) to compare day by day"}
     daily = json.loads(run["daily_json"])
     bt_trades = json.loads(run["trades_json"]) if run["trades_json"] else []
     warnings = []
