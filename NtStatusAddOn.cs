@@ -1,7 +1,14 @@
-// NtStatusAddOn.cs - READ-ONLY status server for NinjaTrader 8.
-// Serves JSON on http://127.0.0.1:8765: /status (accounts, P&L, positions), /orders (working),
-// /executions?limit=N (fills), /strategies, /health (heartbeat + connection status).
-// Contains NO order, cancel, or modify calls. GET requests only.
+// NtStatusAddOn.cs - status server plus risk-reducing controls for NinjaTrader 8.
+// GET  http://127.0.0.1:8765: /status (accounts, P&L, positions), /orders (working),
+//      /executions?limit=N (fills), /strategies, /health (heartbeat + connection status), /killswitch.
+// POST /flatten?account=X[&instrument=Y]   flatten positions (also cancels their orders)
+//      /cancel_all?account=X[&instrument=Y] cancel working orders
+//      /killswitch/arm?account=X&max_loss=N flatten + cancel (latched) once P&L since arming <= -N
+//      /killswitch/disarm
+// Controls only REDUCE risk: there is no order entry and no modify call.
+// Guards: only accounts named "Sim*" unless env NT_OPERATOR_ALLOW_LIVE=1; if env NT_OPERATOR_TOKEN is set,
+// POSTs need a matching X-NT-Token header. The kill switch lives in memory: restarting NT disarms it.
+// NOT yet compiled or run in NT8: Account.Flatten / Account.Cancel usage is unverified.
 #region Using declarations
 using System;
 using System.Collections.Generic;
@@ -60,6 +67,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void Stop()
         {
             running = false;
+            DisarmKill();
             try { if (listener != null) { listener.Stop(); listener.Close(); } } catch { }
             listener = null;
         }
@@ -86,7 +94,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             string body;
             try
             {
-                if (ctx.Request.HttpMethod != "GET") { code = 405; body = "{\"error\":\"read-only\"}"; }
+                if (ctx.Request.HttpMethod == "POST") body = HandlePost(ctx, out code);
+                else if (ctx.Request.HttpMethod != "GET") { code = 405; body = "{\"error\":\"method not allowed\"}"; }
+                else if (ctx.Request.Url.AbsolutePath == "/killswitch") body = BuildKill();
                 else if (ctx.Request.Url.AbsolutePath == "/status") body = BuildStatus();
                 else if (ctx.Request.Url.AbsolutePath == "/orders") body = BuildOrders();
                 else if (ctx.Request.Url.AbsolutePath == "/executions") body = BuildExecutions(QueryInt(ctx, "limit", 200));
@@ -105,6 +115,194 @@ namespace NinjaTrader.NinjaScript.AddOns
             ctx.Response.ContentLength64 = bytes.Length;
             ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
             ctx.Response.OutputStream.Close();
+        }
+
+        // ---- Controls (risk-reducing only) ----
+
+        private System.Threading.Timer killTimer;
+        private readonly object killLock = new object();
+        private string killAccount = "";
+        private double killMaxLoss, killBaseline, killLastPnl;
+        private bool killArmed, killTripped;
+        private DateTime killArmedUtc, killTrippedUtc;
+        private int killActions;
+
+        private static bool AccountAllowed(string name)
+        {
+            return name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase)
+                || Environment.GetEnvironmentVariable("NT_OPERATOR_ALLOW_LIVE") == "1";
+        }
+
+        private static Account FindAccount(string name)
+        {
+            lock (Account.All)
+            {
+                foreach (Account a in Account.All) if (a.Name == name) return a;
+            }
+            return null;
+        }
+
+        private static string Err(string msg) { return "{\"ok\":false,\"error\":" + Q(msg) + "}"; }
+
+        private string HandlePost(HttpListenerContext ctx, out int code)
+        {
+            code = 200;
+            string token = Environment.GetEnvironmentVariable("NT_OPERATOR_TOKEN");
+            if (!string.IsNullOrEmpty(token) && ctx.Request.Headers["X-NT-Token"] != token)
+            { code = 401; return Err("bad or missing X-NT-Token"); }
+
+            string path = ctx.Request.Url.AbsolutePath;
+            if (path == "/killswitch/disarm") { DisarmKill(); return BuildKill(); }
+
+            string name = ctx.Request.QueryString["account"];
+            string instrument = ctx.Request.QueryString["instrument"];
+            if (string.IsNullOrEmpty(name)) { code = 400; return Err("account is required"); }
+            if (!AccountAllowed(name)) { code = 403; return Err("account '" + name + "' is not a Sim account; live control is locked"); }
+            Account a = FindAccount(name);
+            if (a == null) { code = 404; return Err("unknown account '" + name + "'"); }
+
+            if (path == "/flatten") return DoFlatten(a, instrument);
+            if (path == "/cancel_all") return DoCancelAll(a, instrument);
+            if (path == "/killswitch/arm")
+            {
+                double max;
+                if (!double.TryParse(ctx.Request.QueryString["max_loss"], NumberStyles.Float, CultureInfo.InvariantCulture, out max) || max <= 0)
+                { code = 400; return Err("max_loss must be a positive number"); }
+                ArmKill(a, max);
+                return BuildKill();
+            }
+            code = 404;
+            return Err("not found");
+        }
+
+        private static bool Matches(Instrument i, string filter)
+        {
+            return string.IsNullOrEmpty(filter) || (i != null && i.FullName == filter);
+        }
+
+        private static List<Order> CancellableOrders(Account a, string instrument)
+        {
+            var list = new List<Order>();
+            lock (a.Orders)
+            {
+                foreach (Order o in a.Orders)
+                {
+                    if (o.OrderState == OrderState.Filled || o.OrderState == OrderState.Cancelled
+                        || o.OrderState == OrderState.Rejected || o.OrderState == OrderState.CancelPending
+                        || o.OrderState == OrderState.CancelSubmitted) continue;
+                    if (Matches(o.Instrument, instrument)) list.Add(o);
+                }
+            }
+            return list;
+        }
+
+        // Flatten positions (NT also cancels the working orders on those instruments).
+        private string DoFlatten(Account a, string instrument)
+        {
+            var instruments = new List<Instrument>();
+            lock (a.Positions)
+            {
+                foreach (Position p in a.Positions)
+                    if (p.MarketPosition != MarketPosition.Flat && Matches(p.Instrument, instrument)) instruments.Add(p.Instrument);
+            }
+            foreach (Order o in CancellableOrders(a, instrument))
+                if (!instruments.Contains(o.Instrument)) instruments.Add(o.Instrument);
+            if (instruments.Count > 0) a.Flatten(instruments);
+            var names = new List<string>();
+            foreach (Instrument i in instruments) names.Add(Q(i.FullName));
+            return "{\"ok\":true,\"action\":\"flatten\",\"account\":" + Q(a.Name) + ",\"instruments\":[" + string.Join(",", names.ToArray())
+                + "],\"timestamp\":" + Ts(DateTime.UtcNow) + "}";
+        }
+
+        private string DoCancelAll(Account a, string instrument)
+        {
+            List<Order> orders = CancellableOrders(a, instrument);
+            if (orders.Count > 0) a.Cancel(orders);
+            return "{\"ok\":true,\"action\":\"cancel_all\",\"account\":" + Q(a.Name) + ",\"cancel_requested\":"
+                + orders.Count.ToString(CultureInfo.InvariantCulture) + ",\"timestamp\":" + Ts(DateTime.UtcNow) + "}";
+        }
+
+        private static double PnlNow(Account a)
+        {
+            double r = 0, u = 0;
+            try { r = a.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar); } catch { }
+            try { u = a.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar); } catch { }
+            return r + u;
+        }
+
+        // Latched: once P&L since arming reaches -max_loss, keep flattening and cancelling every 2s
+        // (strategies may try to re-enter) until disarmed. This does NOT disable the strategies themselves.
+        private void ArmKill(Account a, double maxLoss)
+        {
+            lock (killLock)
+            {
+                if (killTimer != null) killTimer.Dispose();
+                killAccount = a.Name;
+                killMaxLoss = maxLoss;
+                killBaseline = PnlNow(a);
+                killLastPnl = killBaseline;
+                killArmed = true;
+                killTripped = false;
+                killActions = 0;
+                killArmedUtc = DateTime.UtcNow;
+                killTimer = new System.Threading.Timer(KillTick, null, 2000, 2000);
+            }
+        }
+
+        private void DisarmKill()
+        {
+            lock (killLock)
+            {
+                if (killTimer != null) { killTimer.Dispose(); killTimer = null; }
+                killArmed = false;
+                killTripped = false;
+            }
+        }
+
+        private void KillTick(object state)
+        {
+            try
+            {
+                lock (killLock)
+                {
+                    if (!killArmed) return;
+                    Account a = FindAccount(killAccount);
+                    if (a == null) return;
+                    killLastPnl = PnlNow(a);
+                    if (!killTripped && killLastPnl - killBaseline <= -killMaxLoss)
+                    {
+                        killTripped = true;
+                        killTrippedUtc = DateTime.UtcNow;
+                    }
+                    if (killTripped)
+                    {
+                        DoFlatten(a, null);
+                        DoCancelAll(a, null);
+                        killActions++;
+                    }
+                }
+            }
+            catch (Exception ex) { Print("NtStatusAddOn kill switch error: " + ex.Message); }
+        }
+
+        private string BuildKill()
+        {
+            lock (killLock)
+            {
+                var sb = new StringBuilder();
+                sb.Append("{\"ok\":true,\"timestamp\":").Append(Ts(DateTime.UtcNow));
+                sb.Append(",\"armed\":").Append(killArmed ? "true" : "false");
+                sb.Append(",\"tripped\":").Append(killTripped ? "true" : "false");
+                sb.Append(",\"account\":").Append(Q(killAccount));
+                sb.Append(",\"max_loss\":").Append(Num(killMaxLoss));
+                sb.Append(",\"baseline_pnl\":").Append(Num(killBaseline));
+                sb.Append(",\"pnl_since_arm\":").Append(Num(killLastPnl - killBaseline));
+                sb.Append(",\"armed_at\":").Append(killArmed ? Ts(killArmedUtc) : "null");
+                sb.Append(",\"tripped_at\":").Append(killTripped ? Ts(killTrippedUtc) : "null");
+                sb.Append(",\"flatten_cycles\":").Append(killActions.ToString(CultureInfo.InvariantCulture));
+                sb.Append("}");
+                return sb.ToString();
+            }
         }
 
         private static int QueryInt(HttpListenerContext ctx, string key, int def)

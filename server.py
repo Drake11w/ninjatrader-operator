@@ -1,9 +1,12 @@
-"""Read-only NinjaTrader MCP server.
+"""NinjaTrader MCP server.
 
-Talks to NtStatusAddOn (http://127.0.0.1:8765/status). Exposes NO order tools.
+Talks to NtStatusAddOn (http://127.0.0.1:8765/status). Mostly read-only. The only write tools are the
+risk-reducing controls (flatten, cancel_all_orders, arm/disarm_kill_switch): Sim-only by default, audited,
+no order entry.
 """
 import json
 import os
+import urllib.parse
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -11,6 +14,7 @@ from datetime import datetime, timezone
 from mcp.server.mcpserver import MCPServer
 
 import backtest
+import control
 import journal
 import registry
 import report
@@ -30,6 +34,34 @@ def _fetch(path: str = "/status") -> dict:
             return _stamp(json.loads(r.read().decode("utf-8")))
     except (urllib.error.URLError, TimeoutError, ValueError) as e:
         return {"error": f"NinjaTrader add-on unreachable or bad reply: {e}. Is NT8 running with NtStatusAddOn compiled?"}
+
+
+def _post(path: str, params: dict) -> dict:
+    query = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
+    req = urllib.request.Request(f"{BASE}{path}?{query}", data=b"", method="POST")
+    token = os.environ.get("NT_OPERATOR_TOKEN")
+    if token:
+        req.add_header("X-NT-Token", token)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read().decode("utf-8"))
+        except ValueError:
+            return {"ok": False, "error": f"HTTP {e.code}"}
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        return {"ok": False, "error": f"NinjaTrader add-on unreachable or bad reply: {e}"}
+
+
+def _control(action: str, path: str, params: dict, reason: str = "") -> str:
+    """Guard, call the add-on, audit. Refusals are audited too."""
+    refusal = control.check_account(params.get("account", ""))
+    if not refusal and "max_loss" in params:
+        refusal = control.check_max_loss(params["max_loss"])
+    result = {"ok": False, "error": refusal} if refusal else _post(path, params)
+    control.audit(action, params, result, reason)
+    return json.dumps(result, indent=2)
 
 
 def _stamp(data: dict) -> dict:
@@ -363,6 +395,50 @@ def compare_backtest_to_journal(run_id: int, account: str = "", leg: str = "") -
     built = trades.build_trades(rows)
     out = backtest.compare_to_journal(run, spec, built["trades"], leg)
     return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+def flatten(account: str, instrument: str = "", reason: str = "") -> str:
+    """Flatten open positions on a Sim account (market-closes them and cancels their working orders). Optional
+    instrument (e.g. 'MNQ 12-26') limits it to one. Risk-reducing only; refuses non-Sim accounts. Does NOT stop a
+    strategy from re-entering: disable it in NinjaTrader too. Logged to the audit log."""
+    return _control("flatten", "/flatten", {"account": account, "instrument": instrument}, reason)
+
+
+@mcp.tool()
+def cancel_all_orders(account: str, instrument: str = "", reason: str = "") -> str:
+    """Cancel all working orders on a Sim account (optionally one instrument). Warning: this also cancels protective
+    stops, so only use it when flat or together with flatten. Refuses non-Sim accounts. Logged."""
+    return _control("cancel_all", "/cancel_all", {"account": account, "instrument": instrument}, reason)
+
+
+@mcp.tool()
+def arm_kill_switch(account: str, max_loss: float, reason: str = "") -> str:
+    """Arm a daily-loss kill switch inside the NinjaTrader add-on (works even if Claude is closed). When realized +
+    unrealized P&L since arming reaches -max_loss dollars it flattens and cancels every 2 seconds until disarmed
+    (latched). Arm it at the start of the session. It lives in add-on memory, so restarting NinjaTrader disarms it.
+    Sim accounts only. Logged."""
+    return _control("arm_kill_switch", "/killswitch/arm", {"account": account, "max_loss": max_loss}, reason)
+
+
+@mcp.tool()
+def disarm_kill_switch(reason: str = "") -> str:
+    """Disarm the kill switch and clear a tripped latch. Logged."""
+    result = _post("/killswitch/disarm", {})
+    control.audit("disarm_kill_switch", {}, result, reason)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def get_kill_switch() -> str:
+    """Kill switch state: armed, tripped, P&L since arming, flatten cycles."""
+    return json.dumps(_fetch("/killswitch"), indent=2)
+
+
+@mcp.tool()
+def get_audit_log(limit: int = 50) -> str:
+    """Recent control actions (flatten, cancel, kill switch), including refused attempts."""
+    return json.dumps(control.read_audit(max(1, min(limit, 500))), indent=2)
 
 
 @mcp.tool()
