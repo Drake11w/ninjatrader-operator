@@ -505,10 +505,9 @@ def install_handoff(path: str, apply: bool = False) -> str:
 
 @mcp.tool()
 def enable_strategy(id: str, version: str, account: str, reason: str = "", skip_defaults: bool = True) -> str:
-    """EXPERIMENTAL. Start every leg of a registered strategy version on a Sim account through the add-on (the same
-    internal routines as the Strategies tab). Requires: registry status backtest or sim, a Sim*/allow-listed account,
-    NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment, the scripts compiled, no conflicting strategy on the
-    account. All legs or none. On success a 'backtest' spec moves to 'sim'. Logged to the audit log."""
+    """EXPERIMENTAL. Start every leg of a registered strategy version on a Sim account only. Requires registry status
+    backtest or sim, NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment, compiled scripts, and no conflicts.
+    All legs or none. On success a 'backtest' spec moves to 'sim'. Logged to the audit log."""
     rcon = registry.connect()
     row = registry.get_spec(rcon, id, version)
     params = {"id": id, "version": version, "account": account}
@@ -532,6 +531,8 @@ def _check_live_small_deployment(account: str, status: str):
     """Dedicated two-sided live-small gate; broad live unlocks never satisfy it."""
     if status != "live-small":
         return f"strategy status must be exactly 'live-small' (currently '{status}')"
+    if account and account.lower().startswith("sim"):
+        return "deploy_strategy_live_small is for real accounts; use enable_strategy for Sim accounts"
     if os.environ.get("NT_OPERATOR_ALLOW_LIVE_SMALL") != "1":
         return "live-small deployment locked: set NT_OPERATOR_ALLOW_LIVE_SMALL=1 in the MCP server environment"
     allowed = [a.strip() for a in os.environ.get("NT_OPERATOR_LIVE_SMALL_ACCOUNTS", "").split(",") if a.strip()]
@@ -572,7 +573,7 @@ def deploy_strategy_live_small(id: str, version: str, account: str, reason: str 
 
 @mcp.tool()
 def disable_strategy(account: str, name: str, reason: str = "") -> str:
-    """Disable and stop one strategy instance by its name on a Sim account (names look like '<id> <version> <leg>').
+    """Disable and stop one strategy instance on Sim or an allow-listed live-small account (names look like '<id> <version> <leg>').
     Does not flatten: use flatten if it holds a position. Logged."""
     return _control("disable_strategy", "/strategy/disable", {"account": account, "name": name}, reason)
 
