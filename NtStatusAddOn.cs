@@ -1088,13 +1088,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (string.IsNullOrEmpty(c.Instrument) || HasExposureOrWorkingOrders(c.Account, c.Instrument))
                     {
                         c.LastResult = "blocked: open position or working order on " + c.Instrument;
-                        continue;
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        recoveryLastEvent = "blocked by exposure/order check " + pair.Key;
+                        recoveryLastEventUtc = now;
+                        continue; // require manual review; do not restart later when the account becomes flat
                     }
                     string problem;
                     MethodInfo enable = GridMethod(out problem, "StrategyEnable");
                     if (problem != null)
                     {
                         c.LastResult = "failed: " + problem;
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        recoveryLastEvent = "enable unavailable " + pair.Key;
+                        recoveryLastEventUtc = now;
                         continue;
                     }
                     try
@@ -1108,7 +1114,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     catch (Exception ex)
                     {
                         c.LastResult = "failed: " + (ex.InnerException ?? ex).Message;
-                        recoveryLastEvent = "re-enable failed " + pair.Key;
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        recoveryLastEvent = "re-enable failed " + pair.Key + ": " + c.LastResult;
                         recoveryLastEventUtc = now;
                     }
                 }
