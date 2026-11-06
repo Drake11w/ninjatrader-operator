@@ -21,9 +21,9 @@ and needs to be reconciled with the real system's strategy format and metrics.
 
 ## Phase 2 - Record and analyze (still read-only)
 - [x] Trade journal: persist every execution to SQLite (survives NT restarts), tagged by strategy + version (call `sync_journal` periodically; auto-sync not built)
-- [ ] Round-trip trade builder: pair entry/exit into trades with MAE/MFE, duration, slippage vs signal price
-- [ ] Performance tools: net P&L, win rate, expectancy, profit factor, avg win/loss, max drawdown, Sharpe/Sortino,
-      by day-of-week, time-of-day, regime, month (Monday RTH etc.)
+- [x] Round-trip trade builder: FIFO pairing into trades with duration and net P&L (`get_trades`); MAE/MFE and slippage vs signal price still need bar/signal data from the add-on
+- [x] Performance tools (`get_performance`): net P&L, win rate, expectancy, profit factor, avg win/loss, max drawdown, daily Sharpe/Sortino,
+      by weekday, entry hour, month. Still open: by regime (needs the regime state below)
 - [ ] Prop-firm rule tracker: daily loss limit, trailing drawdown, profit target, consistency rule,
       distance-to-breach in dollars; alert thresholds (put the real Lucid rule values in config)
 - [ ] Regime state: expose the system's regime classification (trend/range/high-vol) alongside each trade

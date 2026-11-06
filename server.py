@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from mcp.server.mcpserver import MCPServer
 
 import journal
+import trades
 
 BASE = os.environ.get("NT_ADDON_URL", "http://127.0.0.1:8765")
 STALE_SECONDS = 30
@@ -120,6 +121,39 @@ def get_journal(account: str = "", strategy: str = "", since: str = "", limit: i
     finally:
         con.close()
     return json.dumps({"count": len(rows), "executions": rows}, indent=2)
+
+
+@mcp.tool()
+def get_trades(account: str = "", strategy: str = "", since: str = "", point_values: str = "") -> str:
+    """Round-trip trades built from the local journal (FIFO pairing of entry and exit fills), with P&L net of
+    commission. `point_values` is optional JSON like {"MNQ": 2.0}; defaults cover common futures."""
+    return _trade_report(account, strategy, since, point_values, summary_only=False)
+
+
+@mcp.tool()
+def get_performance(account: str = "", strategy: str = "", since: str = "", point_values: str = "") -> str:
+    """Performance stats from journaled trades: net P&L, win rate, expectancy, profit factor, avg win/loss, max
+    drawdown, Sharpe/Sortino (daily), and breakdowns by weekday, entry hour (ET) and month. Warns on small samples."""
+    return _trade_report(account, strategy, since, point_values, summary_only=True)
+
+
+def _trade_report(account, strategy, since, point_values, summary_only):
+    try:
+        pv = json.loads(point_values) if point_values else None
+    except ValueError:
+        return json.dumps({"error": 'point_values must be valid JSON, e.g. {"MNQ": 2.0}'})
+    con = journal.connect()
+    try:
+        rows = journal.query(con, account, strategy, since, 5000)
+    finally:
+        con.close()
+    built = trades.build_trades(rows, pv)
+    if summary_only:
+        out = {"performance": trades.performance(built["trades"]), "open_positions": built["open"]}
+    else:
+        out = {"count": len(built["trades"]), "trades": built["trades"], "open_positions": built["open"]}
+    out["warnings"] = built["warnings"]
+    return json.dumps(out, indent=2)
 
 
 @mcp.tool()
