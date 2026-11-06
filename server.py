@@ -14,6 +14,7 @@ import journal
 import report
 import rules
 import sessions
+import strategy_spec
 import trades
 
 BASE = os.environ.get("NT_ADDON_URL", "http://127.0.0.1:8765")
@@ -220,6 +221,20 @@ def get_session_info(instrument: str = "") -> str:
         return json.dumps(sessions.session_info(instrument=instrument), indent=2)
     except Exception as e:  # missing tz database etc.
         return json.dumps({"error": f"{type(e).__name__}: {e} (on Windows, pip install tzdata)"})
+
+
+@mcp.tool()
+def validate_strategy_spec(spec: str) -> str:
+    """Check a strategy spec (JSON text, schema v1) against the shared Lucid/operator format. Returns every problem
+    found at once, or a short summary if valid. Does not save or run anything. See STRATEGY_SPEC.md."""
+    try:
+        parsed = json.loads(spec)
+    except ValueError as e:
+        return json.dumps({"valid": False, "errors": [f"not valid JSON: {e}"]})
+    errs = strategy_spec.validate(parsed)
+    if errs:
+        return json.dumps({"valid": False, "errors": errs}, indent=2)
+    return json.dumps({"valid": True, "summary": strategy_spec.summarize(parsed)}, indent=2)
 
 
 @mcp.tool()
