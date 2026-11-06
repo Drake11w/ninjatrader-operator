@@ -22,8 +22,53 @@ TRADES_CSV = """Trade #,Instrument,Account,Strategy,Market pos.,Qty,Entry price,
 GROSS_CSV = TRADES_CSV.replace('"$20.00","$20.00"', '"$21.24","$20.00"').replace('"($20.00)","$0.00"', '"($18.76)","$0.00"').replace('"$60.00","$60.00"', '"$61.24","$60.00"')
 PERIODS_CSV = "Period,Net profit,Trades\n11/2/2026,$20.00,1\n11/3/2026,($20.00),1\n11/4/2026,$60.00,1\n"
 
+LIST_CSV = (
+    "Instrument,Backtest type,Date,Strategy,Data Series,Start date,End date,Parameters,Total net profit,"
+    "Total # of trades,Notes,Pinned,\n"
+    "MNQ 12-26,Backtest,11/5/2026 10:22:01 PM,PlaceholderLegA,1 Minute,1/1/2020 12:00:00 AM,11/5/2026 12:00:00 AM,"
+    "83000/154000/1,\"$1,200.0\",35,,False,\n"
+    "MNQ 12-26,Backtest,10/22/2026 9:00:00 PM,PlaceholderLegA,1 Minute,1/1/2020 12:00:00 AM,10/22/2026 12:00:00 AM,"
+    "83000/154000/1,1250.5,34,,False,\n"
+    "MNQ 12-26,Backtest,11/5/2026 10:20:29 PM,PlaceholderLegB,1 Minute,1/1/2020 12:00:00 AM,11/5/2026 12:00:00 AM,"
+    "110000/145500,800.0000000001,60,,False,\n"
+    "MNQ 12-26,Optimize,11/4/2026 1:00:00 AM,PlaceholderLegB,1 Minute,1/1/2020 12:00:00 AM,11/4/2026 12:00:00 AM,"
+    "1/2/3,99999,9,,False,\n"
+    "MNQ 12-26,Backtest,11/4/2026 1:00:00 AM,SomethingElse,1 Minute,1/1/2020 12:00:00 AM,11/4/2026 12:00:00 AM,"
+    "1/2/3,5,1,,False,\n"
+    "MES 12-26,Backtest,11/5/2026 11:00:00 PM,PlaceholderLegB,1 Minute,1/1/2020 12:00:00 AM,11/5/2026 12:00:00 AM,"
+    "1/2/3,1,1,,False,\n"
+    "13/200/1.25 (Period),2,,,,,,,,,,,\n")
+
 
 class ParseTests(unittest.TestCase):
+    def test_backtests_list_grid(self):
+        p = backtest.parse(LIST_CSV, "America/Chicago")
+        self.assertEqual(p["kind"], "summary")
+        self.assertEqual(len(p["runs"]), 5)  # optimisation and malformed rows skipped
+        self.assertEqual(p["runs"][0]["net_pnl"], 1200.0)
+        self.assertEqual(p["runs"][2]["net_pnl"], 800.0)  # float noise rounded
+
+    def test_summary_import_picks_latest_run_per_leg_and_instrument(self):
+        con = registry.connect(":memory:")
+        registry.submit(con, SPEC)
+        r = backtest.import_run(con, SPEC, LIST_CSV)
+        self.assertTrue(r["ok"])
+        m = r["metrics"]
+        self.assertEqual((m["trades"], m["net_pnl"], m["start"], m["end"]), (95, 2000.0, "2020-01-01", "2026-11-05"))
+        self.assertEqual([l["net_pnl"] for l in m["legs"]], [1200.0, 800.0])  # not the older / MES / Optimize rows
+        self.assertEqual(r["claims_check"]["metrics"]["min_trades"], {"claimed": 500, "actual": 95, "status": "differs"})
+        self.assertIn("max_drawdown", r["claims_check"]["not_comparable"])
+        run = backtest.get_run(con, r["run_id"])
+        self.assertIn("error", backtest.compare_to_journal(run, SPEC, [{"exit_time": "2026-11-03T16:00:00Z", "net_pnl": 1}]))
+
+    def test_summary_import_needs_every_leg(self):
+        con = registry.connect(":memory:")
+        registry.submit(con, SPEC)
+        only_a = "\n".join(l for l in LIST_CSV.splitlines() if "PlaceholderLegB" not in l) + "\n"
+        r = backtest.import_run(con, SPEC, only_a)
+        self.assertFalse(r["ok"])
+        self.assertIn("leg-b-range-breakout", r["error"])
+
     def test_numbers_and_dates(self):
         self.assertEqual(backtest._num("($1,234.50)"), -1234.5)
         self.assertEqual(backtest._num("$12"), 12.0)
