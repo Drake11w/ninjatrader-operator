@@ -590,6 +590,23 @@ def disable_strategy(account: str, name: str, reason: str = "") -> str:
 
 
 @mcp.tool()
+def list_strategy_rows() -> str:
+    """List every row in NinjaTrader's Strategies tab(s), including stopped ones left behind by earlier enables
+    (get_strategies cannot see those). Read-only. Needs the add-on's /strategy/rows endpoint (experimental)."""
+    return json.dumps(_fetch("/strategy/rows"), indent=2)
+
+
+@mcp.tool()
+def purge_strategy_rows(account: str, confirm: bool = False, name: str = "", reason: str = "") -> str:
+    """Remove stale rows from the Strategies tab for one account: only rows that are NOT enabled, not running
+    (Historical/Transition/Realtime) and flat. Same account guards as disable_strategy. confirm=false (default) is a
+    dry run that lists what it would remove; confirm=true removes them. `name` limits it to one exact row name.
+    Audited. Experimental: the add-on endpoint is uncompiled until you press F5."""
+    params = {"account": account, "name": name, "confirm": "1" if confirm else ""}
+    return _control("purge_strategy_rows", "/strategy/purge", params, reason)
+
+
+@mcp.tool()
 def flatten(account: str, instrument: str = "", reason: str = "") -> str:
     """Flatten open positions on a Sim account (market-closes them and cancels their working orders). Optional
     instrument (e.g. 'MNQ 12-26') limits it to one. Risk-reducing only; refuses non-Sim accounts. Does NOT stop a
