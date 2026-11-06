@@ -34,6 +34,21 @@ namespace NinjaTrader.NinjaScript.AddOns
         private Thread worker;
         private volatile bool running;
         private DateTime startedUtc = DateTime.UtcNow;
+        private System.Threading.Timer recoveryTimer;
+        private readonly object recoveryLock = new object();
+        private class RecoveryCandidate
+        {
+            public Account Account;
+            public StrategyBase Strategy;
+            public string Instrument;
+            public DateTime FirstDisconnectedUtc;
+            public DateTime ReconnectedUtc;
+            public string LastResult = "waiting";
+        }
+        private readonly Dictionary<string, RecoveryCandidate> recoveryCandidates = new Dictionary<string, RecoveryCandidate>();
+        private readonly Dictionary<string, RecoveryCandidate> lastKnownRunning = new Dictionary<string, RecoveryCandidate>();
+        private string recoveryLastEvent = "not started";
+        private DateTime recoveryLastEventUtc = DateTime.UtcNow;
 
         protected override void OnStateChange()
         {
@@ -61,6 +76,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 running = true;
                 worker = new Thread(Loop) { IsBackground = true, Name = "NtStatusAddOn" };
                 worker.Start();
+                recoveryTimer = new System.Threading.Timer(RecoveryTick, null, 5000, 5000);
                 Print("NtStatusAddOn: listening on http://127.0.0.1:" + Port + "/status");
             }
             catch (Exception ex)
@@ -72,6 +88,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void Stop()
         {
             running = false;
+            if (recoveryTimer != null) { recoveryTimer.Dispose(); recoveryTimer = null; }
             DisarmKill();
             try { if (listener != null) { listener.Stop(); listener.Close(); } } catch { }
             listener = null;
@@ -108,6 +125,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 else if (ctx.Request.Url.AbsolutePath == "/strategies") body = BuildStrategies();
                 else if (ctx.Request.Url.AbsolutePath == "/strategy/rows") body = DoStrategyRows(null, false, null);
                 else if (ctx.Request.Url.AbsolutePath == "/health") body = BuildHealth();
+                else if (ctx.Request.Url.AbsolutePath == "/recovery") body = BuildRecovery();
                 else if (ctx.Request.Url.AbsolutePath == "/backtest/job") body = BuildBacktestJob(QueryInt(ctx, "id", 0), ctx.Request.QueryString["trades"] == "1");
                 else if (ctx.Request.Url.AbsolutePath == "/debug/types") body = BuildTypes(ctx.Request.QueryString["filter"], ctx.Request.QueryString["members"] == "1");
                 else { code = 404; body = "{\"error\":\"not found\"}"; }
@@ -1028,6 +1046,235 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
             sb.Append("]}");
             return sb.ToString();
+        }
+
+        // ---- Conservative strategy recovery watchdog ---------------------------------------------------------
+        // Recovery is opt-in and requires exact account + strategy allowlists. It only remembers strategies
+        // observed Realtime while their account connection/feed is down. It never creates a new instance.
+        private static bool ExactCsvContains(string envName, string value)
+        {
+            string raw = Environment.GetEnvironmentVariable(envName);
+            if (string.IsNullOrWhiteSpace(raw) || string.IsNullOrWhiteSpace(value)) return false;
+            return raw.Split(',').Any(x => string.Equals(x.Trim(), value, StringComparison.Ordinal));
+        }
+
+        private static bool RecoveryEnabled(Account a, StrategyBase st)
+        {
+            if (Environment.GetEnvironmentVariable("NT_OPERATOR_AUTO_RECOVER") != "1") return false;
+            if (!StrategyStartAllowed()) return false;
+            if (!ExactCsvContains("NT_OPERATOR_AUTO_RECOVER_ACCOUNTS", a.Name)) return false;
+            if (!ExactCsvContains("NT_OPERATOR_AUTO_RECOVER_STRATEGIES", st.Name)) return false;
+            if (!a.Name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!LiveSmallStrategyAccountAllowed(a.Name)) return false;
+                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NT_OPERATOR_TOKEN"))) return false;
+            }
+            return true;
+        }
+
+        private static bool AccountConnectionReady(Account a)
+        {
+            return a.Connection != null
+                && string.Equals(a.Connection.Status.ToString(), "Connected", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(a.Connection.PriceStatus.ToString(), "Connected", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HasExposureOrWorkingOrders(Account a, string instrument)
+        {
+            lock (a.Positions)
+                foreach (Position p in a.Positions)
+                    if (p.Instrument != null && p.Instrument.FullName == instrument && p.MarketPosition != MarketPosition.Flat)
+                        return true;
+            lock (a.Orders)
+                foreach (Order o in a.Orders)
+                {
+                    if (o.Instrument == null || o.Instrument.FullName != instrument) continue;
+                    if (o.OrderState != OrderState.Filled && o.OrderState != OrderState.Cancelled
+                        && o.OrderState != OrderState.Rejected) return true;
+                }
+            return false;
+        }
+
+        private void RecoveryTick(object state)
+        {
+            try
+            {
+                var app = System.Windows.Application.Current;
+                if (app == null || app.Dispatcher == null) return;
+                app.Dispatcher.BeginInvoke(new Action(RecoveryPollOnUi));
+            }
+            catch (Exception ex) { Print("NtStatusAddOn recovery poll error: " + ex.Message); }
+        }
+
+        private void RecoveryPollOnUi()
+        {
+            try
+            {
+                DateTime now = DateTime.UtcNow;
+                lock (Account.All)
+                {
+                    foreach (Account a in Account.All)
+                    {
+                        bool ready = AccountConnectionReady(a);
+                        lock (a.Strategies)
+                        {
+                            foreach (StrategyBase st in a.Strategies)
+                            {
+                                if (st == null) continue;
+                                string key = a.Name + "|" + st.Name;
+                                if (ready)
+                                {
+                                    lock (recoveryLock)
+                                    {
+                                        if (st.State.ToString() == "Realtime" && RecoveryEnabled(a, st))
+                                        {
+                                            // Keep a short-lived snapshot while healthy, so a fast disconnect that
+                                            // terminates the strategy before the next poll is still recoverable.
+                                            lastKnownRunning[key] = new RecoveryCandidate {
+                                                Account = a, Strategy = st,
+                                                Instrument = st.Instrument == null ? "" : st.Instrument.FullName,
+                                                FirstDisconnectedUtc = now, LastResult = "last observed running while connected"
+                                            };
+                                        }
+                                        else lastKnownRunning.Remove(key); // deliberate stop while healthy is never restored
+                                    }
+                                }
+                                // While disconnected, candidates are copied from the last healthy snapshot
+                                // below, including strategies already removed from Account.Strategies.
+                            }
+                        }
+                    if (!ready)
+                    {
+                        lock (recoveryLock)
+                            foreach (var priorPair in lastKnownRunning.Where(x => x.Value.Account.Name == a.Name).ToList())
+                            {
+                                if (recoveryCandidates.ContainsKey(priorPair.Key)) continue;
+                                RecoveryCandidate prior = priorPair.Value;
+                                recoveryCandidates[priorPair.Key] = new RecoveryCandidate {
+                                    Account = prior.Account, Strategy = prior.Strategy, Instrument = prior.Instrument,
+                                    FirstDisconnectedUtc = now, LastResult = "captured from last healthy running snapshot"
+                                };
+                                recoveryLastEvent = "captured " + priorPair.Key;
+                                recoveryLastEventUtc = now;
+                            }
+                    }
+                    }
+                }
+
+                List<KeyValuePair<string, RecoveryCandidate>> candidates;
+                lock (recoveryLock) candidates = recoveryCandidates.ToList();
+                foreach (var pair in candidates)
+                {
+                    RecoveryCandidate c = pair.Value;
+                    if (!AccountConnectionReady(c.Account))
+                    {
+                        c.ReconnectedUtc = DateTime.MinValue;
+                        continue;
+                    }
+                    if (c.ReconnectedUtc == DateTime.MinValue)
+                    {
+                        c.ReconnectedUtc = now;
+                        c.LastResult = "connection/feed restored; waiting for stability";
+                        continue;
+                    }
+                    double stableSeconds = 30;
+                    double configured;
+                    if (double.TryParse(Environment.GetEnvironmentVariable("NT_OPERATOR_AUTO_RECOVER_STABLE_SECONDS"),
+                        NumberStyles.Float, CultureInfo.InvariantCulture, out configured))
+                        stableSeconds = Math.Max(30, Math.Min(300, configured));
+                    if ((now - c.ReconnectedUtc).TotalSeconds < stableSeconds) continue;
+
+                    StrategyBase current = FindStrategy(c.Account, c.Strategy.Name);
+                    if (current == null)
+                    {
+                        c.LastResult = "skipped: strategy instance no longer exists";
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        recoveryLastEvent = "skipped missing " + pair.Key; recoveryLastEventUtc = now;
+                        continue;
+                    }
+                    if (current.State.ToString() == "Realtime")
+                    {
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        continue;
+                    }
+                    lock (killLock)
+                    {
+                        if (killArmed && killTripped)
+                        {
+                            lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                            recoveryLastEvent = "blocked by tripped kill switch " + pair.Key;
+                            recoveryLastEventUtc = now;
+                            continue;
+                        }
+                    }
+                    if (!RecoveryEnabled(c.Account, current))
+                    {
+                        c.LastResult = "skipped: recovery gates no longer pass";
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        recoveryLastEvent = "skipped by gates " + pair.Key; recoveryLastEventUtc = now;
+                        continue;
+                    }
+                    if (string.IsNullOrEmpty(c.Instrument) || HasExposureOrWorkingOrders(c.Account, c.Instrument))
+                    {
+                        c.LastResult = "blocked: open position or working order on " + c.Instrument;
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        recoveryLastEvent = "blocked by exposure/order check " + pair.Key;
+                        recoveryLastEventUtc = now;
+                        continue; // require manual review; do not restart later when the account becomes flat
+                    }
+                    string problem;
+                    MethodInfo enable = GridMethod(out problem, "StrategyEnable");
+                    if (problem != null)
+                    {
+                        c.LastResult = "failed: " + problem;
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        recoveryLastEvent = "enable unavailable " + pair.Key;
+                        recoveryLastEventUtc = now;
+                        continue;
+                    }
+                    try
+                    {
+                        enable.Invoke(null, new object[] { current, null, null });
+                        c.LastResult = "enable requested; state=" + current.State;
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        recoveryLastEvent = "re-enable requested " + pair.Key;
+                        recoveryLastEventUtc = now;
+                    }
+                    catch (Exception ex)
+                    {
+                        c.LastResult = "failed: " + (ex.InnerException ?? ex).Message;
+                        lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                        recoveryLastEvent = "re-enable failed " + pair.Key + ": " + c.LastResult;
+                        recoveryLastEventUtc = now;
+                    }
+                }
+            }
+            catch (Exception ex) { Print("NtStatusAddOn recovery error: " + ex.Message); }
+        }
+
+        private string BuildRecovery()
+        {
+            var sb = new StringBuilder("{\"enabled\":");
+            sb.Append(Environment.GetEnvironmentVariable("NT_OPERATOR_AUTO_RECOVER") == "1" ? "true" : "false");
+            sb.Append(",\"last_event\":").Append(Q(recoveryLastEvent));
+            sb.Append(",\"last_event_utc\":").Append(Ts(recoveryLastEventUtc));
+            sb.Append(",\"pending\":[");
+            bool first = true;
+            lock (recoveryLock)
+                foreach (var kv in recoveryCandidates)
+                {
+                    if (!first) sb.Append(",");
+                    first = false;
+                    RecoveryCandidate c = kv.Value;
+                    sb.Append("{\"account\":").Append(Q(c.Account.Name))
+                        .Append(",\"strategy\":").Append(Q(c.Strategy.Name))
+                        .Append(",\"instrument\":").Append(Q(c.Instrument))
+                        .Append(",\"result\":").Append(Q(c.LastResult))
+                        .Append(",\"disconnected_since\":").Append(Ts(c.FirstDisconnectedUtc))
+                        .Append(",\"reconnected_since\":").Append(c.ReconnectedUtc == DateTime.MinValue ? "null" : Ts(c.ReconnectedUtc))
+                        .Append("}");
+                }
+            return sb.Append("]}").ToString();
         }
 
         // Add-on heartbeat plus connection / data-feed status per account.
