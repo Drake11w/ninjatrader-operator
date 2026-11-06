@@ -30,7 +30,7 @@ and needs to be reconciled with the real system's strategy format and metrics.
 - [x] Daily/weekly report generator (`get_report`, markdown; HTML and sending not built)
 
 ## Phase 3 - Strategy evaluation bridge (the core of the integration)
-- [ ] Shared strategy spec: one JSON/YAML schema (id, version, instrument, session, entry/exit rules,
+- [~] Shared strategy spec (v1 DRAFT in `STRATEGY_SPEC.md` + `validate_strategy_spec`; needs reconciling with the Lucid system's real format): one JSON/YAML schema (id, version, instrument, session, entry/exit rules,
       sizing, stops, parameters, hypothesis, expected metrics). Lucid system emits it; operator ingests it.
 - [ ] `submit_strategy(spec)`: register a candidate; status moves candidate -> backtest -> sim -> live-small -> live
 - [ ] Backtest ingestion: import NinjaTrader Strategy Analyzer exports (CSV/XML) and/or Lucid backtest results

@@ -1,0 +1,31 @@
+{
+  "_note": "EXAMPLE ONLY: every number here is a made-up placeholder, not your real ORB settings.",
+  "schema_version": 1,
+  "id": "orb-mnq",
+  "version": "1.0.0",
+  "name": "MNQ opening range breakout",
+  "status": "candidate",
+  "hypothesis": "PLACEHOLDER: describe why a breakout of the opening range should have positive expectancy after costs. Written by the Lucid system or by you.",
+  "source": {"system": "lucid", "ref": "PLACEHOLDER"},
+  "instrument": {"root": "MNQ", "contract_policy": "front", "bar": {"type": "minute", "value": 5}},
+  "session": {"timezone": "America/New_York", "entry_start": "09:45", "entry_end": "11:00", "flat_by": "15:55"},
+  "entry": {
+    "side": "long",
+    "max_trades_per_day": 1,
+    "rules": [
+      {"type": "range_breakout", "description": "Go long when price breaks above the high of the opening range.",
+       "params": {"range_minutes": 15}}
+    ]
+  },
+  "exit": {
+    "stop": {"type": "points", "value": 40},
+    "target": {"type": "points", "value": 80},
+    "rules": [
+      {"type": "time_exit", "description": "Close any open position at the flat_by time."}
+    ]
+  },
+  "sizing": {"contracts": 1, "max_contracts": 2},
+  "parameters": {"range_minutes": 15},
+  "costs": {"commission_per_side": 0.5, "slippage_ticks": 1},
+  "expected_metrics": {"min_trades": 100, "win_rate": 0.45, "expectancy": 20, "profit_factor": 1.3, "max_drawdown": 1500}
+}
