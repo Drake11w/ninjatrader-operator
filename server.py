@@ -15,6 +15,7 @@ from mcp.server.mcpserver import MCPServer
 
 import backtest
 import control
+import handoff
 import journal
 import registry
 import report
@@ -36,9 +37,9 @@ def _fetch(path: str = "/status") -> dict:
         return {"error": f"NinjaTrader add-on unreachable or bad reply: {e}. Is NT8 running with NtStatusAddOn compiled?"}
 
 
-def _post(path: str, params: dict) -> dict:
+def _post(path: str, params: dict, body: str = "") -> dict:
     query = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
-    req = urllib.request.Request(f"{BASE}{path}?{query}", data=b"", method="POST")
+    req = urllib.request.Request(f"{BASE}{path}?{query}", data=body.encode("utf-8"), method="POST")
     token = os.environ.get("NT_OPERATOR_TOKEN")
     if token:
         req.add_header("X-NT-Token", token)
@@ -395,6 +396,47 @@ def compare_backtest_to_journal(run_id: int, account: str = "", leg: str = "") -
     built = trades.build_trades(rows)
     out = backtest.compare_to_journal(run, spec, built["trades"], leg)
     return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+def install_handoff(path: str, apply: bool = False) -> str:
+    """Check a Lucid handoff bundle folder (handoff/<id>/<version>): spec schema, approval flag, .cs sha256 against
+    MANIFEST, inputs and order names against the C# source. With apply=false (default) it only reports the plan.
+    With apply=true it backs up and copies the .cs files into NinjaTrader's Custom\Strategies, registers the spec as
+    a candidate and writes per-leg strategy templates when a fresh skeleton exists. You still compile in NinjaTrader (F5)."""
+    return json.dumps(handoff.install_bundle(path, apply), indent=2)
+
+
+@mcp.tool()
+def enable_strategy(id: str, version: str, account: str, reason: str = "", skip_defaults: bool = False) -> str:
+    """EXPERIMENTAL. Start every leg of a registered strategy version on a Sim account through the add-on (the same
+    internal routines as the Strategies tab). Requires: registry status backtest or sim, a Sim*/allow-listed account,
+    NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment, the scripts compiled, no conflicting strategy on the
+    account. All legs or none. On success a 'backtest' spec moves to 'sim'. Logged to the audit log."""
+    rcon = registry.connect()
+    row = registry.get_spec(rcon, id, version)
+    params = {"id": id, "version": version, "account": account}
+    refusal = control.check_account(account)
+    if not refusal and "error" in row:
+        refusal = row["error"]
+    if not refusal and row.get("status") not in ("backtest", "sim"):
+        refusal = (f"status is '{row.get('status')}': move it to 'backtest' (after a Strategy Analyzer run) with "
+                   f"set_strategy_status before enabling")
+    if refusal:
+        result = {"ok": False, "error": refusal}
+    else:
+        result = handoff.enable_spec(row["spec"], account, lambda p, q, b: _post(p, q, b), _fetch, skip_defaults=skip_defaults)
+        if result["ok"] and row["status"] == "backtest":
+            registry.set_status(rcon, id, version, "sim", f"enabled on {account} via add-on")
+    control.audit("enable_strategy", params, result, reason)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def disable_strategy(account: str, name: str, reason: str = "") -> str:
+    """Disable and stop one strategy instance by its name on a Sim account (names look like '<id> <version> <leg>').
+    Does not flatten: use flatten if it holds a position. Logged."""
+    return _control("disable_strategy", "/strategy/disable", {"account": account, "name": name}, reason)
 
 
 @mcp.tool()

@@ -100,6 +100,19 @@ class ServerTests(unittest.TestCase):
                           "cancel_all", "disarm_kill_switch"])
         self.assertEqual([r["ok"] for r in log][:3], [True, False, False])
 
+    def test_allowlist(self):
+        import tempfile
+        os.environ["NT_AUDIT_FILE"] = os.path.join(tempfile.mkdtemp(), "audit.jsonl")
+        os.environ["NT_OPERATOR_ALLOWED_ACCOUNTS"] = "LFE1, LFE2"
+        try:
+            posts.clear()
+            self.assertTrue(json.loads(self.s.flatten("LFE2"))["ok"])
+            self.assertFalse(json.loads(self.s.flatten("LFE"))["ok"])
+            self.assertFalse(json.loads(self.s.flatten("LFE3"))["ok"])
+            self.assertEqual(len(posts), 1)
+        finally:
+            del os.environ["NT_OPERATOR_ALLOWED_ACCOUNTS"]
+
     def test_live_unlock_and_token(self):
         import tempfile
         os.environ["NT_AUDIT_FILE"] = os.path.join(tempfile.mkdtemp(), "audit.jsonl")

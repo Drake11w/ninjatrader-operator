@@ -1,6 +1,6 @@
 """Guards and audit log for the risk-reducing control tools (flatten, cancel, kill switch).
 
-Controls never enter or modify orders. They are Sim-only unless NT_OPERATOR_ALLOW_LIVE=1 is set (the add-on
+Controls never enter or modify orders. They are limited to accounts named Sim*, accounts listed in NT_OPERATOR_ALLOWED_ACCOUNTS (comma-separated, exact names), or everything if NT_OPERATOR_ALLOW_LIVE=1 is set (the add-on
 enforces the same rule, so both sides must be unlocked). Every attempt, allowed or refused, is appended to a
 JSON-lines audit log (NT_AUDIT_FILE, default ~/.ninjatrader-operator/audit.jsonl).
 """
@@ -19,12 +19,17 @@ def allow_live() -> bool:
     return os.environ.get("NT_OPERATOR_ALLOW_LIVE") == "1"
 
 
+def allowed_accounts() -> list:
+    return [a.strip() for a in os.environ.get("NT_OPERATOR_ALLOWED_ACCOUNTS", "").split(",") if a.strip()]
+
+
 def check_account(account: str):
     """Return an error string if control of this account is not allowed, else None."""
     if not account or not account.strip():
         return "account is required (no default: name the account explicitly)"
-    if not account.lower().startswith("sim") and not allow_live():
-        return f"refused: '{account}' is not a Sim account and live control is locked (NT_OPERATOR_ALLOW_LIVE)"
+    if not (account.lower().startswith("sim") or account in allowed_accounts() or allow_live()):
+        return (f"refused: '{account}' is not a Sim* account or in NT_OPERATOR_ALLOWED_ACCOUNTS, "
+                "and live control is locked (NT_OPERATOR_ALLOW_LIVE)")
     return None
 
 
