@@ -13,10 +13,10 @@ and needs to be reconciled with the real system's strategy format and metrics.
 ## Phase 1 - Observe (read-only; done / nearly done)
 - [x] Accounts: cash value, realized/unrealized P&L
 - [x] Open positions
-- [ ] Orders: working/pending orders, with strategy name and ATM/stop/target
-- [ ] Executions: fills with time, price, entry/exit, strategy name (source of truth for trade logs)
-- [ ] Strategy status: enabled/disabled, which chart/instrument, current position, last signal
-- [ ] Connection health: connected/disconnected, data feed status, add-on heartbeat
+- [x] Orders: working/pending orders, with strategy name and ATM/stop/target
+- [x] Executions: fills with time, price, entry/exit, strategy name (source of truth for trade logs)
+- [x] (needs NT8 compile check) Strategy status: enabled/disabled, which chart/instrument, current position, last signal
+- [x] Connection health: connected/disconnected, data feed status, add-on heartbeat
 - [ ] Session/market info: current session, time to RTH open/close, front-month contract roll
 
 ## Phase 2 - Record and analyze (still read-only)
