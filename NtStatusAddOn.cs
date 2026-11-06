@@ -1078,6 +1078,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                         lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
                         continue;
                     }
+                    lock (killLock)
+                    {
+                        if (killArmed && killTripped)
+                        {
+                            lock (recoveryLock) recoveryCandidates.Remove(pair.Key);
+                            recoveryLastEvent = "blocked by tripped kill switch " + pair.Key;
+                            recoveryLastEventUtc = now;
+                            continue;
+                        }
+                    }
                     if (!RecoveryEnabled(c.Account, current))
                     {
                         c.LastResult = "skipped: recovery gates no longer pass";
