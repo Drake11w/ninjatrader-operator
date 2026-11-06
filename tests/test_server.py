@@ -24,8 +24,8 @@ def payloads():
             {"account": "Sim101", "name": "Stop loss", "state": "Accepted"},
             {"account": "Other", "name": "x", "state": "Working"}]},
         "/executions": {"timestamp": ts, "executions": [
-            {"account": "Sim101", "order_name": "ORB long", "is_entry": True, "price": 1},
-            {"account": "Sim101", "order_name": "ORB time exit", "is_exit": True, "price": 2}]},
+            {"account": "Sim101", "execution_id": "e1", "time": "2026-11-05T14:30:00Z", "order_name": "ORB long", "is_entry": True, "price": 1},
+            {"account": "Sim101", "execution_id": "e2", "time": "2026-11-05T15:00:00Z", "order_name": "ORB time exit", "is_exit": True, "price": 2}]},
         "/strategies": {"timestamp": ts, "strategies": [{"account": "Sim101", "name": "ORB", "state": "Realtime"}]},
         "/health": {"ok": True, "timestamp": ts, "uptime_seconds": 5, "connections": [
             {"account": "Sim101", "status": "Connected", "price_status": "Disconnected"}]},
@@ -72,6 +72,15 @@ class ServerTests(unittest.TestCase):
     def test_executions_limit(self):
         rows = json.loads(self.s.get_executions(limit=1))["executions"]
         self.assertEqual([r["order_name"] for r in rows], ["ORB time exit"])
+
+    def test_sync_and_read_journal(self):
+        import tempfile
+        os.environ["NT_JOURNAL_DB"] = os.path.join(tempfile.mkdtemp(), "j.sqlite")
+        first = json.loads(self.s.sync_journal("ORB", "v1"))
+        self.assertEqual((first["new"], first["fetched"]), (2, 2))
+        self.assertEqual(json.loads(self.s.sync_journal())["new"], 0)
+        rows = json.loads(self.s.get_journal(strategy="ORB"))
+        self.assertEqual(rows["count"], 2)
 
     def test_strategies(self):
         self.assertEqual(json.loads(self.s.get_strategies())["strategies"][0]["name"], "ORB")
