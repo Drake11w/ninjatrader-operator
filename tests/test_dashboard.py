@@ -101,6 +101,7 @@ class DashboardTests(unittest.TestCase):
         self.assertFalse(sp["heartbeat_stale"])
         self.assertEqual(sp["incidents"][0]["key"], "trade_pace")
         self.assertEqual(sp["perf"]["notes"], ["x: not judged"])
+        self.assertEqual(sp["recent_events"][0]["kind"], "opened")
         json.dumps(sp, default=str)
 
     def test_nt_down_still_works(self):

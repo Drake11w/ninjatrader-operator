@@ -88,10 +88,18 @@ function strat(s){
     <details open><summary>Legs</summary><table><tr><th>Leg</th><th>Side</th><th>Session (CT)</th><th>NinjaTrader</th><th>Trades</th><th>Net P&L</th></tr>${legs}</table></details>
     <details><summary>Verdict checks (${(v.checks||[]).length})</summary><table><tr><th>Check</th><th>Status</th><th>Actual</th><th>Threshold</th><th></th></tr>${checks}</table>
       ${(v.warnings||[]).length?`<ul class=reasons>${v.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>`:''}</details>
+    ${cmpTable(s.comparison)}
     ${bt?`<details><summary>Backtest reference</summary><div class=sub>Run ${bt.run_id} ${esc(bt.label||'')} · ${esc(bt.start||'')} → ${esc(bt.end||'')} · net/yr ${money(bt.net_per_year)} · trades/yr ${num(bt.trades_per_year,0)} · net ${money(bt.net_pnl)} on ${bt.trades??'–'} trades</div></details>`:'<details><summary>Backtest reference</summary><div class=sub>No backtest imported: decay detection is off for this strategy (import_backtest).</div></details>'}
     <details><summary>Stage history &amp; verdict log</summary><table><tr><th>When</th><th>Change</th><th>Note</th></tr>${hist}</table>
       ${rec?`<table style="margin-top:8px"><tr><th>Recorded</th><th>Stage</th><th>Verdict</th><th>Trades</th><th>Net</th></tr>${rec}</table>`:''}</details>
     ${s.hypothesis?`<details><summary>Hypothesis</summary><div class=hyp>${esc(s.hypothesis)}</div></details>`:''}</div>`;
+}
+const CF={ok:['ok','ok'],worse:['bad','worse'],better:['blue','better'],shift:['warn','shift'],low_sample:['','low sample'],'n/a':['','n/a']};
+function cmpTable(c){
+  if(!c)return '';
+  const f=(k,x)=>x==null?'–':k=='win_rate'?pct(x):k=='expectancy'||k.startsWith('avg_w')||k=='avg_loss'?money(x):num(x,k=='profit_factor'?2:1);
+  const rows=c.rows.map(r=>`<tr><td>${esc(r.label)}</td><td>${f(r.metric,r.backtest)}</td><td>${f(r.metric,r.sim)}</td><td><span class="pill ${CF[r.flag][0]}">${CF[r.flag][1]}</span></td></tr>`).join('');
+  return `<details><summary>Backtest vs sim (${esc(c.summary.replace('_',' '))})</summary><table><tr><th>Metric</th><th>Backtest</th><th>Sim</th><th></th></tr>${rows}</table>${c.notes.length?`<ul class=reasons>${c.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}</details>`;
 }
 const CHECK={performance_drift:'Performance vs backtest',trade_pace:'Trade pace',holding_time_shift:'Holding time',fills_unpairable:'Unpairable fills'};
 function supervisor(s){
@@ -101,8 +109,9 @@ function supervisor(s){
   const p=s.perf,pp=!p?'<span class="pill">Performance checks not run yet</span>':p.skipped&&!p.findings?`<span class="pill warn">Performance checks skipped</span> <span class="sub">${esc(p.skipped)}</span>`:`<span class="pill ${p.findings?'warn':'ok'}">Performance checks: ${p.findings} finding(s)</span> <span class="sub">checked ${ago(p.checked_at)}${p.skipped?' · last refresh skipped: '+esc(p.skipped):''}</span>`;
   const rows=s.incidents.map(i=>`<tr><td>${esc(i.id)}</td><td><span class="pill ${i.severity>=3?'bad':i.severity==2?'warn':''}">SEV${i.severity}</span></td><td>${esc(CHECK[i.key]||i.key)}</td><td>${esc([i.account,i.strategy].filter(Boolean).join(' '))}</td><td>${esc(i.trigger)}</td><td>${ago(i.opened_at)}</td><td>${esc(i.status)}</td></tr>`).join('');
   const notes=p&&p.notes&&p.notes.length?`<details><summary>Check notes (${p.notes.length})</summary><ul class=reasons>${p.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></details>`:'';
+  const evs=(s.recent_events||[]),hist=evs.length?`<details><summary>Incident history (last ${evs.length} events)</summary><table><tr><th>When</th><th>Event</th><th>Check</th><th>Who</th><th>Sev</th><th>ID</th></tr>${evs.map(e=>`<tr><td>${when(e.at)}</td><td>${esc(e.kind)}</td><td>${esc(CHECK[e.key]||e.key)}</td><td>${esc([e.account,e.strategy].filter(Boolean).join(' '))}</td><td>${e.severity}</td><td>${esc(e.id)}</td></tr>`).join('')}</table></details>`:'';
   return `<h2>Supervisor (${s.incidents.length} active incident${s.incidents.length==1?'':'s'})</h2><div class="card">${hb} ${pp}
-    ${rows?`<table style="margin-top:10px"><tr><th>ID</th><th>Sev</th><th>Check</th><th>Who</th><th>What</th><th>Opened</th><th>Status</th></tr>${rows}</table>`:'<div class="sub" style="margin-top:8px">No active incidents.</div>'}${notes}</div>`;
+    ${rows?`<table style="margin-top:10px"><tr><th>ID</th><th>Sev</th><th>Check</th><th>Who</th><th>What</th><th>Opened</th><th>Status</th></tr>${rows}</table>`:'<div class="sub" style="margin-top:8px">No active incidents.</div>'}${notes}${hist}</div>`;
 }
 function render(d){
   const sm=d.summary,nt=d.nt;

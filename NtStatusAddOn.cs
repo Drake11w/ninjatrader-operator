@@ -868,7 +868,26 @@ namespace NinjaTrader.NinjaScript.AddOns
                         sb.Append(",\"execution_id\":").Append(Q(e.ExecutionId));
                         sb.Append(",\"instrument\":").Append(Q(e.Instrument.FullName));
                         sb.Append(",\"time\":").Append(Ts(e.Time));
-                        sb.Append(",\"action\":").Append(Q(e.Order != null ? e.Order.OrderAction.ToString() : ""));
+                        // Prefer the order's own action. If the Order object is gone (fills from before an NT restart),
+                        // derive it from the execution's market position plus entry/exit. UNVERIFIED in NT: this assumes
+                        // Execution.MarketPosition is the side of the position the fill belongs to (long entry = Buy,
+                        // long exit = Sell, short entry = SellShort, short exit = BuyToCover). "action_source" says
+                        // which path was used so the Python side and a human can tell.
+                        string act = "", actSrc = "order";
+                        if (e.Order != null) act = e.Order.OrderAction.ToString();
+                        else
+                        {
+                            actSrc = "derived";
+                            bool isLong = e.MarketPosition == MarketPosition.Long;
+                            bool isShort = e.MarketPosition == MarketPosition.Short;
+                            if (e.IsEntry && isLong) act = "Buy";
+                            else if (e.IsEntry && isShort) act = "SellShort";
+                            else if (e.IsExit && isLong) act = "Sell";
+                            else if (e.IsExit && isShort) act = "BuyToCover";
+                            else actSrc = "unknown";
+                        }
+                        sb.Append(",\"action\":").Append(Q(act));
+                        sb.Append(",\"action_source\":").Append(Q(actSrc));
                         sb.Append(",\"order_name\":").Append(Q(e.Order != null ? e.Order.Name : ""));
                         sb.Append(",\"quantity\":").Append(e.Quantity.ToString(CultureInfo.InvariantCulture));
                         sb.Append(",\"price\":").Append(Num(e.Price));
