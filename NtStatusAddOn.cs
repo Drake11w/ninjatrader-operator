@@ -1024,7 +1024,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 // below, including strategies already removed from Account.Strategies.
                             }
                         }
-                    }
                     if (!ready)
                     {
                         lock (recoveryLock)
@@ -1039,6 +1038,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 recoveryLastEvent = "captured " + priorPair.Key;
                                 recoveryLastEventUtc = now;
                             }
+                    }
                     }
                 }
 
