@@ -23,8 +23,7 @@ Lucid system uses; `America/New_York` is also allowed.
 | `backtest` | no | `start`, `end` (`YYYY-MM-DD`) the expected metrics were measured over. |
 | `expected_metrics` | no | `min_trades`, `trades_per_year`, `net_per_year`, `win_rate`\*, `expectancy`, `profit_factor`, `max_drawdown`, `profit_to_drawdown`, `avg_trades_per_day`, `eval_pass`\*, `eval_fail`\*, `eval_sessions_to_pass`, `chain_odds`\*. (\* = fraction 0-1, so 0.82 = 82%.) These are the **backtest's claims**, used later for drift checks, never live results. |
 
-`ninjascript.class` is what NinjaTrader reports as the strategy name, so the journal can tag executions to the right
-leg. Unknown extra keys are ignored. Not in v2: regime filters (the Lucid system mostly gates on VIX / event days /
+`ninjascript.class` is what NinjaTrader reports as the strategy name. `ninjascript.order_names` (optional list) are the entry/exit names the script passes to NinjaTrader, e.g. `"ORB long"`: `sync_journal` uses them to tag each fill with the spec id, version and leg, once the spec is in `sim`, `live-small` or `live` (stop and target fills, which NinjaTrader names "Stop loss" / "Profit target", follow the latest entry on that account and instrument). Unknown extra keys are ignored. Not in v2: regime filters (the Lucid system mostly gates on VIX / event days /
 prior-day range, expressed here as `gates`), per-leg expected metrics, funded-phase rules.
 
 ---

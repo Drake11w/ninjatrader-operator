@@ -76,6 +76,7 @@ class ServerTests(unittest.TestCase):
     def test_sync_and_read_journal(self):
         import tempfile
         os.environ["NT_JOURNAL_DB"] = os.path.join(tempfile.mkdtemp(), "j.sqlite")
+        os.environ["NT_REGISTRY_DB"] = os.path.join(tempfile.mkdtemp(), "r.sqlite")
         first = json.loads(self.s.sync_journal("ORB", "v1"))
         self.assertEqual((first["new"], first["fetched"]), (2, 2))
         self.assertEqual(json.loads(self.s.sync_journal())["new"], 0)

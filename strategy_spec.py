@@ -240,6 +240,11 @@ def _check_leg(leg, where: str, errs: list):
         inputs = ns.get("inputs", {})
         if not isinstance(inputs, dict) or not all(isinstance(v, (int, float, str, bool)) for v in inputs.values()):
             errs.append(f"{where}.ninjascript.inputs must be a flat object of numbers, strings or booleans")
+        names = ns.get("order_names", [])
+        if not (isinstance(names, list) and all(isinstance(n, str) and n.strip() for n in names)
+                and len(set(names)) == len(names)):
+            errs.append(f"{where}.ninjascript.order_names must be a list of unique non-empty strings "
+                        f"(the entry/exit names the script passes to NinjaTrader, e.g. \"ORB long\")")
 
 
 def _validate_v2(spec: dict) -> list:

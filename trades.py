@@ -58,7 +58,7 @@ def build_trades(executions: list, point_values: dict = None) -> dict:
                 "quantity": q, "entry_time": lot["time"], "exit_time": e["time"],
                 "entry_price": lot["price"], "exit_price": e["price"],
                 "entry_name": lot["name"], "exit_name": e.get("order_name"),
-                "strategy": lot["strategy"], "strategy_version": lot["version"],
+                "strategy": lot["strategy"], "strategy_version": lot["version"], "leg": lot["leg"],
                 "duration_sec": int((_parse(e["time"]) - _parse(lot["time"])).total_seconds()),
                 "points": round(points, 4),
                 "gross_pnl": round(points * value, 2), "commission": round(fee, 2),
@@ -72,7 +72,8 @@ def build_trades(executions: list, point_values: dict = None) -> dict:
         if remaining:
             lots.append({"sign": sign, "qty": remaining, "price": e["price"], "time": e["time"],
                          "name": e.get("order_name"), "commission": comm * remaining / orig,
-                         "strategy": e.get("strategy", ""), "version": e.get("strategy_version", "")})
+                         "strategy": e.get("strategy", ""), "version": e.get("strategy_version", ""),
+                         "leg": e.get("leg", "")})
     if unknown:
         warnings.append("no point value for " + ", ".join(sorted(unknown)) + "; P&L assumes $1/point (pass point_values)")
     open_lots = [{"account": k[0], "instrument": k[1], "side": "long" if lot["sign"] > 0 else "short",

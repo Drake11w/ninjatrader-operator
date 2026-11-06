@@ -21,6 +21,7 @@ and needs to be reconciled with the real system's strategy format and metrics.
 
 ## Phase 2 - Record and analyze (still read-only)
 - [x] Trade journal: persist every execution to SQLite (survives NT restarts), tagged by strategy + version (call `sync_journal` periodically; auto-sync not built)
+- [x] Auto-tagging: `sync_journal` tags fills with spec id/version/leg from registered specs' `ninjascript.order_names` (only specs in sim/live-small/live; stop fills follow the latest entry; `leg` column added to the journal, old journals migrate). Fills synced before a spec was registered stay untagged
 - [x] Round-trip trade builder: FIFO pairing into trades with duration and net P&L (`get_trades`); MAE/MFE and slippage vs signal price still need bar/signal data from the add-on
 - [x] Performance tools (`get_performance`): net P&L, win rate, expectancy, profit factor, avg win/loss, max drawdown, daily Sharpe/Sortino,
       by weekday, entry hour, month. Still open: by regime (needs the regime state below)
