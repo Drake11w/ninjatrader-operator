@@ -623,6 +623,12 @@ def get_audit_log(limit: int = 50) -> str:
 
 
 @mcp.tool()
+def get_recovery_status() -> str:
+    """Show the add-on's opt-in reconnect recovery watchdog, pending strategies, and any blocked/failed restart."""
+    return json.dumps(_fetch("/recovery"), indent=2)
+
+
+@mcp.tool()
 def get_health() -> str:
     """Add-on heartbeat and connection / data-feed status. Call this first if other data looks wrong."""
     data = _fetch("/health")
