@@ -123,6 +123,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 else if (ctx.Request.Url.AbsolutePath == "/orders") body = BuildOrders();
                 else if (ctx.Request.Url.AbsolutePath == "/executions") body = BuildExecutions(QueryInt(ctx, "limit", 200));
                 else if (ctx.Request.Url.AbsolutePath == "/strategies") body = BuildStrategies();
+                else if (ctx.Request.Url.AbsolutePath == "/strategy/rows") body = DoStrategyRows(null, false, null);
                 else if (ctx.Request.Url.AbsolutePath == "/health") body = BuildHealth();
                 else if (ctx.Request.Url.AbsolutePath == "/recovery") body = BuildRecovery();
                 else if (ctx.Request.Url.AbsolutePath == "/backtest/job") body = BuildBacktestJob(QueryInt(ctx, "id", 0), ctx.Request.QueryString["trades"] == "1");
@@ -239,7 +240,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             string name = ctx.Request.QueryString["account"];
             string instrument = ctx.Request.QueryString["instrument"];
             if (string.IsNullOrEmpty(name)) { code = 400; return Err("account is required"); }
-            bool strategyPath = path == "/strategy/enable" || path == "/strategy/disable";
+            bool strategyPath = path == "/strategy/enable" || path == "/strategy/disable" || path == "/strategy/purge";
             bool simAccount = name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase);
             bool accountAllowed = strategyPath
                 ? (simAccount || LiveSmallStrategyAccountAllowed(name))
@@ -252,6 +253,11 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             if (path == "/strategy/enable") return DoStrategyEnable(ctx, a, out code);
             if (path == "/strategy/disable") return DoStrategyDisable(ctx, a, out code);
+            if (path == "/strategy/purge")
+            {
+                if (!StrategyStartAllowed()) { code = 403; return Err("strategy control is locked: set NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment"); }
+                return DoStrategyRows(a, ctx.Request.QueryString["confirm"] == "1", ctx.Request.QueryString["name"]);
+            }
             if (path == "/flatten") return DoFlatten(a, instrument);
             if (path == "/cancel_all") return DoCancelAll(a, instrument);
             if (path == "/killswitch/arm")
@@ -455,6 +461,100 @@ namespace NinjaTrader.NinjaScript.AddOns
             }));
             if (error != null) { code = 500; return Err("disable failed: " + error); }
             return "{\"ok\":true,\"action\":\"strategy_disable\",\"account\":" + Q(a.Name) + ",\"name\":" + Q(name) + ",\"timestamp\":" + Ts(DateTime.UtcNow) + "}";
+        }
+
+        // ---- Stale strategy rows and purge (EXPERIMENTAL; NOT verified) ---------------------------------------------
+        // NinjaTrader drops stopped instances from Account.Strategies, but the Strategies tab keeps their rows, so
+        // /strategies and disable cannot see them. StrategyBase.All (static, no UI thread needed) still lists every
+        // strategy object, so this reads that.
+        //   GET  /strategy/rows                         lists every strategy object NinjaTrader still holds (read-only)
+        //   POST /strategy/purge?account=X              dry run: lists the ones it WOULD remove
+        //   POST /strategy/purge?account=X&confirm=1    removes them (optional &name=<exact name> for one)
+        // Only a Finalized or Terminated (already stopped), flat strategy is removed; Realtime never. A Configure object is removed only
+        // when it duplicates a running strategy (same name and account) and is named with &name=. Same guards as
+        // /strategy/disable. Removal calls StrategiesGrid.StrategyRemove (what right-click Remove uses) on the main UI
+        // dispatcher with a bounded wait, so a busy window can never hang the HTTP thread.
+        private static List<StrategyBase> AllStrategies()
+        {
+            var list = new List<StrategyBase>();
+            var all = StrategyBase.All;
+            lock (all) { foreach (StrategyBase st in all) list.Add(st); }
+            return list;
+        }
+
+        private static string SafeName(StrategyBase o) { try { return o.Name; } catch { return null; } }
+        private static string SafeAccount(StrategyBase o) { try { return o.Account != null ? o.Account.Name : ""; } catch { return null; } }
+        private static string SafeState(StrategyBase o) { try { return o.State.ToString(); } catch { return null; } }
+
+        private string DoStrategyRows(Account account, bool remove, string onlyName)
+        {
+            string problem = null;
+            MethodInfo rm = null;
+            if (account != null && remove) rm = GridMethod(out problem, "StrategyRemove");
+            if (problem != null) return Err(problem);
+            var rows = new List<string>();
+            int removed = 0, would = 0, errors = 0;
+            System.Windows.Threading.Dispatcher main = null;
+            try
+            {
+                Assembly core = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(x => x.GetName().Name == "NinjaTrader.Core");
+                Type gt = core == null ? null : core.GetType("NinjaTrader.Core.Globals", false);
+                PropertyInfo mp = gt == null ? null : gt.GetProperty("MainThreadDispatcher", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                main = mp == null ? null : mp.GetValue(null, null) as System.Windows.Threading.Dispatcher;
+            }
+            catch { }
+            if (main == null) main = System.Windows.Application.Current.Dispatcher;
+            var all = AllStrategies();
+            foreach (StrategyBase st in all)
+            {
+                string acct = "", state = "", inst = "", name = "";
+                bool flat = true;
+                try
+                {
+                    acct = st.Account != null ? st.Account.Name : "";
+                    state = st.State.ToString();
+                    name = st.Name;
+                    inst = st.Instrument != null ? st.Instrument.FullName : "";
+                    flat = st.Position == null || st.Position.Quantity == 0;
+                }
+                catch (Exception ex) { state = "unreadable: " + ex.GetType().Name; }
+                // Only objects NinjaTrader has already stopped. "Configure" rows are saved templates or never-started strategies: never removed.
+                bool stopped = state == "Finalized" || state == "Terminated";
+                // A Configure object is also removable if it is a duplicate of a RUNNING strategy (same name and account) AND the
+                // caller named it explicitly. Templates and never-started rows without a running twin are never removed.
+                if (!stopped && state == "Configure" && !string.IsNullOrEmpty(onlyName) && name == onlyName)
+                    stopped = all.Any(o => !object.ReferenceEquals(o, st) && SafeName(o) == name && SafeAccount(o) == acct && SafeState(o) == "Realtime");
+                bool eligible = account != null && acct == account.Name && stopped && flat
+                    && (string.IsNullOrEmpty(onlyName) || name == onlyName);
+                string outcome = "";
+                if (eligible)
+                {
+                    if (!remove) { would++; outcome = "would_remove"; }
+                    else
+                    {
+                        try
+                        {
+                            StrategyBase target = st;
+                            string err = null;
+                            var op = main.InvokeAsync(() =>
+                            {
+                                try { rm.Invoke(null, new object[] { target }); }
+                                catch (Exception ex) { err = (ex.InnerException ?? ex).Message; }
+                            }, System.Windows.Threading.DispatcherPriority.Send);
+                            if (op.Wait(TimeSpan.FromSeconds(8)) != System.Windows.Threading.DispatcherOperationStatus.Completed)
+                            { op.Abort(); errors++; outcome = "error: main window did not respond within 8 seconds"; }
+                            else if (err != null) { errors++; outcome = "error: " + err; }
+                            else { removed++; outcome = "removed"; }
+                        }
+                        catch (Exception ex) { errors++; outcome = "error: " + (ex.InnerException ?? ex).Message; }
+                    }
+                }
+                rows.Add("{\"account\":" + Q(acct) + ",\"name\":" + Q(name) + ",\"instrument\":" + Q(inst)
+                    + ",\"state\":" + Q(state) + ",\"flat\":" + (flat ? "true" : "false") + ",\"outcome\":" + Q(outcome) + "}");
+            }
+            return "{\"ok\":true,\"action\":\"strategy_purge\",\"dry_run\":" + (remove ? "false" : "true") + ",\"count\":" + rows.Count
+                + ",\"would_remove\":" + would + ",\"removed\":" + removed + ",\"errors\":" + errors
+                + ",\"rows\":[" + string.Join(",", rows.ToArray()) + "],\"timestamp\":" + Ts(DateTime.UtcNow) + "}";
         }
 
         // ---- Backtests through an open Strategy Analyzer window (EXPERIMENTAL) -----------------------------------
@@ -886,7 +986,26 @@ namespace NinjaTrader.NinjaScript.AddOns
                         sb.Append(",\"execution_id\":").Append(Q(e.ExecutionId));
                         sb.Append(",\"instrument\":").Append(Q(e.Instrument.FullName));
                         sb.Append(",\"time\":").Append(Ts(e.Time));
-                        sb.Append(",\"action\":").Append(Q(e.Order != null ? e.Order.OrderAction.ToString() : ""));
+                        // Prefer the order's own action. If the Order object is gone (fills from before an NT restart),
+                        // derive it from the execution's market position plus entry/exit. UNVERIFIED in NT: this assumes
+                        // Execution.MarketPosition is the side of the position the fill belongs to (long entry = Buy,
+                        // long exit = Sell, short entry = SellShort, short exit = BuyToCover). "action_source" says
+                        // which path was used so the Python side and a human can tell.
+                        string act = "", actSrc = "order";
+                        if (e.Order != null) act = e.Order.OrderAction.ToString();
+                        else
+                        {
+                            actSrc = "derived";
+                            bool isLong = e.MarketPosition == MarketPosition.Long;
+                            bool isShort = e.MarketPosition == MarketPosition.Short;
+                            if (e.IsEntry && isLong) act = "Buy";
+                            else if (e.IsEntry && isShort) act = "SellShort";
+                            else if (e.IsExit && isLong) act = "Sell";
+                            else if (e.IsExit && isShort) act = "BuyToCover";
+                            else actSrc = "unknown";
+                        }
+                        sb.Append(",\"action\":").Append(Q(act));
+                        sb.Append(",\"action_source\":").Append(Q(actSrc));
                         sb.Append(",\"order_name\":").Append(Q(e.Order != null ? e.Order.Name : ""));
                         sb.Append(",\"quantity\":").Append(e.Quantity.ToString(CultureInfo.InvariantCulture));
                         sb.Append(",\"price\":").Append(Num(e.Price));

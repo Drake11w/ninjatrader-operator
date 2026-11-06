@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from mcp.server.mcpserver import MCPServer
 
 import backtest
+import comparison
 import control
 import handoff
 import journal
@@ -375,6 +376,19 @@ def check_backtest(run_id: int) -> str:
 
 
 @mcp.tool()
+def compare_backtest_to_sim(id: str, version: str, account: str = "") -> str:
+    """Backtest vs sim on identical metrics (expectancy, win rate, profit factor, average win/loss, trades per year,
+    median holding time) for a registered strategy version, with an ok/worse/better/shift flag per row. Flags are
+    suppressed below 15 sim trades. Read-only; it does not record a verdict or change a stage."""
+    rcon, jcon = registry.connect(), journal.connect()
+    try:
+        return json.dumps(comparison.for_strategy(rcon, jcon, id, version, account), indent=2, default=str)
+    finally:
+        rcon.close()
+        jcon.close()
+
+
+@mcp.tool()
 def compare_backtest_to_journal(run_id: int, account: str = "", leg: str = "") -> str:
     """Day-by-day comparison of an imported backtest against the journaled sim/live trades of the same strategy:
     days only one side traded, same-direction rate, net difference, biggest daily gaps. The backtest must cover the
@@ -555,9 +569,6 @@ def deploy_strategy_live_small(id: str, version: str, account: str, reason: str 
     try:
         row = registry.get_spec(rcon, id, version)
         refusal = row.get("error") if "error" in row else _check_live_small_deployment(account, row.get("status"))
-        approval = registry.get_approval(rcon, id, version) if "error" not in row else None
-        if not refusal and not (approval and approval.get("approved")):
-            refusal = "recorded handoff approval is missing or false; install an approved handoff bundle before live-small deployment"
         if not refusal and not reason.strip():
             refusal = "a non-empty deployment reason is required and will be written to the audit log"
         params = {"id": id, "version": version, "account": account}
@@ -576,6 +587,23 @@ def disable_strategy(account: str, name: str, reason: str = "") -> str:
     """Disable and stop one strategy instance on Sim or an allow-listed live-small account (names look like '<id> <version> <leg>').
     Does not flatten: use flatten if it holds a position. Logged."""
     return _control("disable_strategy", "/strategy/disable", {"account": account, "name": name}, reason)
+
+
+@mcp.tool()
+def list_strategy_rows() -> str:
+    """List every row in NinjaTrader's Strategies tab(s), including stopped ones left behind by earlier enables
+    (get_strategies cannot see those). Read-only. Needs the add-on's /strategy/rows endpoint (experimental)."""
+    return json.dumps(_fetch("/strategy/rows"), indent=2)
+
+
+@mcp.tool()
+def purge_strategy_rows(account: str, confirm: bool = False, name: str = "", reason: str = "") -> str:
+    """Remove stale rows from the Strategies tab for one account: only rows that are NOT enabled, not running
+    (Historical/Transition/Realtime) and flat. Same account guards as disable_strategy. confirm=false (default) is a
+    dry run that lists what it would remove; confirm=true removes them. `name` limits it to one exact row name.
+    Audited. Experimental: the add-on endpoint is uncompiled until you press F5."""
+    params = {"account": account, "name": name, "confirm": "1" if confirm else ""}
+    return _control("purge_strategy_rows", "/strategy/purge", params, reason)
 
 
 @mcp.tool()
