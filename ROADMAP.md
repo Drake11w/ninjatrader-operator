@@ -27,7 +27,7 @@ and needs to be reconciled with the real system's strategy format and metrics.
 - [x] Prop-firm rule tracker (`get_rule_status`): daily loss limit, trailing drawdown (EOD or intraday, optional lock), profit target, consistency rule,
       distance-to-breach in dollars, ok/warning/breach thresholds. Closed-trade basis (optional unrealized). Needs real Lucid values in the rules file; push alerts not built
 - [ ] Regime state: expose the system's regime classification (trend/range/high-vol) alongside each trade
-- [ ] Daily/weekly report generator (markdown/HTML) that Claude can read or send
+- [x] Daily/weekly report generator (`get_report`, markdown; HTML and sending not built)
 
 ## Phase 3 - Strategy evaluation bridge (the core of the integration)
 - [ ] Shared strategy spec: one JSON/YAML schema (id, version, instrument, session, entry/exit rules,

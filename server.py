@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from mcp.server.mcpserver import MCPServer
 
 import journal
+import report
 import rules
 import trades
 
@@ -183,6 +184,30 @@ def get_rule_status(account: str = "", strategy: str = "", include_unrealized: b
     out = rules.evaluate(built["trades"], cfg, unrealized=unrealized)
     out["warnings"] += built["warnings"]
     return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+def get_report(period: str = "day", date: str = "", account: str = "", strategy: str = "") -> str:
+    """Markdown trading report for a day or week (period "day" or "week"; `date` is a trading day like 2026-11-05,
+    default today). Includes summary, trades, open positions and, if a rules file exists, prop-rule status."""
+    if period not in ("day", "week"):
+        return json.dumps({"error": 'period must be "day" or "week"'})
+    try:
+        cfg = rules.load_rules()
+    except (OSError, ValueError):
+        cfg = None
+    con = journal.connect()
+    try:
+        rows = journal.query(con, account, strategy, "", 5000)
+    finally:
+        con.close()
+    built = trades.build_trades(rows)
+    try:
+        return report.build_report(built["trades"], built["open"], period, date, cfg,
+                                   tz_name=(cfg or {}).get("timezone", "America/New_York"),
+                                   start_hour=(cfg or {}).get("session_start_hour", 18))
+    except ValueError:
+        return json.dumps({"error": "date must look like 2026-11-05"})
 
 
 @mcp.tool()
