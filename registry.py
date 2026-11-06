@@ -87,6 +87,24 @@ def set_status(con: sqlite3.Connection, sid: str, version: str, to: str, note: s
     return {"ok": True, "id": sid, "version": version, "from": cur, "to": to}
 
 
+def order_name_map(con: sqlite3.Connection) -> dict:
+    """{order_name: (spec id, version, leg name)} for specs that are actually trading (sim, live-small, live).
+
+    If two versions claim the same order name, the more advanced stage wins, then the newer submission."""
+    rows = con.execute("SELECT id, version, status, spec_json FROM specs WHERE status IN (?,?,?)"
+                       " ORDER BY submitted_at, rowid", ("sim", "live-small", "live")).fetchall()
+    rows = sorted(rows, key=lambda r: STAGES.index(r["status"]))  # stable: later submissions stay later
+    out = {}
+    for r in rows:
+        spec = json.loads(r["spec_json"])
+        if spec.get("schema_version") != 2:
+            continue
+        for leg in spec["legs"]:
+            for name in leg["ninjascript"].get("order_names", []):
+                out[name] = (r["id"], r["version"], leg["name"])
+    return out
+
+
 def list_specs(con: sqlite3.Connection, sid: str = "", status: str = "") -> list:
     q, args = "SELECT id, version, status, submitted_at, spec_json FROM specs WHERE 1=1", []
     if sid:

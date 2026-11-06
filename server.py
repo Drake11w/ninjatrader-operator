@@ -105,13 +105,23 @@ def get_strategies(account: str = "") -> str:
 @mcp.tool()
 def sync_journal(strategy: str = "", version: str = "", limit: int = 500) -> str:
     """Save NinjaTrader's recent fills into the local SQLite journal (safe to repeat; duplicates are skipped).
-    Optionally tag new rows with a strategy name and version. Writes only to the local journal, never to NinjaTrader."""
+    New rows are tagged with the strategy and leg of any registered spec in sim/live-small/live whose
+    ninjascript.order_names match the fill (stop/target fills follow the latest entry); or pass strategy/version to
+    tag everything yourself. Writes only to the local journal, never to NinjaTrader."""
     data = _fetch(f"/executions?limit={max(1, min(limit, 500))}")
     if "error" in data:
         return json.dumps(data)
     con = journal.connect()
     try:
-        counts = journal.record(con, data["executions"], strategy, version)
+        tagger = None
+        if not strategy:
+            rcon = registry.connect()
+            try:
+                tagger = journal.make_tagger(con, registry.order_name_map(rcon))
+            finally:
+                rcon.close()
+        execs = sorted(data["executions"], key=lambda e: e.get("time") or "")
+        counts = journal.record(con, execs, strategy, version, tagger)
     finally:
         con.close()
     return json.dumps({**_meta(data), **counts, "fetched": len(data["executions"])}, indent=2)
