@@ -6,7 +6,8 @@
 //      /killswitch/arm?account=X&max_loss=N flatten + cancel (latched) once P&L since arming <= -N
 //      /killswitch/disarm
 // Controls only REDUCE risk: there is no order entry and no modify call.
-// Guards: only accounts named "Sim*" unless env NT_OPERATOR_ALLOW_LIVE=1; if env NT_OPERATOR_TOKEN is set,
+// Guards: only accounts named "Sim*" or listed (exact names, comma-separated) in env NT_OPERATOR_ALLOWED_ACCOUNTS,
+// unless env NT_OPERATOR_ALLOW_LIVE=1; if env NT_OPERATOR_TOKEN is set,
 // POSTs need a matching X-NT-Token header. The kill switch lives in memory: restarting NT disarms it.
 // NOT yet compiled or run in NT8: Account.Flatten / Account.Cancel usage is unverified.
 #region Using declarations
@@ -129,8 +130,13 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static bool AccountAllowed(string name)
         {
-            return name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase)
-                || Environment.GetEnvironmentVariable("NT_OPERATOR_ALLOW_LIVE") == "1";
+            if (name.StartsWith("Sim", StringComparison.OrdinalIgnoreCase)
+                || Environment.GetEnvironmentVariable("NT_OPERATOR_ALLOW_LIVE") == "1") return true;
+            string list = Environment.GetEnvironmentVariable("NT_OPERATOR_ALLOWED_ACCOUNTS");
+            if (string.IsNullOrEmpty(list)) return false;
+            foreach (string part in list.Split(','))
+                if (part.Trim() == name) return true;
+            return false;
         }
 
         private static Account FindAccount(string name)
@@ -157,7 +163,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             string name = ctx.Request.QueryString["account"];
             string instrument = ctx.Request.QueryString["instrument"];
             if (string.IsNullOrEmpty(name)) { code = 400; return Err("account is required"); }
-            if (!AccountAllowed(name)) { code = 403; return Err("account '" + name + "' is not a Sim account; live control is locked"); }
+            if (!AccountAllowed(name)) { code = 403; return Err("account '" + name + "' is not a Sim* account or in NT_OPERATOR_ALLOWED_ACCOUNTS; live control is locked"); }
             Account a = FindAccount(name);
             if (a == null) { code = 404; return Err("unknown account '" + name + "'"); }
 
