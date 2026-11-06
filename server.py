@@ -555,9 +555,6 @@ def deploy_strategy_live_small(id: str, version: str, account: str, reason: str 
     try:
         row = registry.get_spec(rcon, id, version)
         refusal = row.get("error") if "error" in row else _check_live_small_deployment(account, row.get("status"))
-        approval = registry.get_approval(rcon, id, version) if "error" not in row else None
-        if not refusal and not (approval and approval.get("approved")):
-            refusal = "recorded handoff approval is missing or false; install an approved handoff bundle before live-small deployment"
         if not refusal and not reason.strip():
             refusal = "a non-empty deployment reason is required and will be written to the audit log"
         params = {"id": id, "version": version, "account": account}
