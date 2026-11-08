@@ -22,8 +22,9 @@ A tick is idempotent and never blocks. Order of steps:
 "Once per day" is the safety valve: if you stop a strategy by hand, the launcher does not start it again until
 tomorrow. Failed attempts are retried up to MAX_ATTEMPTS per day, then it alerts and stops trying.
 
-It cannot log in for you. NinjaTrader must be set to connect automatically at startup with saved credentials
-(Tools > Options > Automatically connect). Exchange holidays are not modelled (see sessions.py).
+It cannot log in for you, and NinjaTrader 8.1 asks for the password on every launch (docs/KNOWN_ISSUES.md BUG-001):
+a restart stops at the login window. The launcher alerts when it sees that window, unless the supervisor daemon is
+running (it reports the same thing). Every --apply run writes launcher_heartbeat.json for the watcher (sup_watch.py). Exchange holidays are not modelled (see sessions.py).
 """
 import json
 import os
@@ -36,12 +37,13 @@ from datetime import date, datetime, time, timedelta, timezone
 
 import control
 import handoff
+import nt_local
 import registry
 import sessions
 import sup_alerts
 import sup_profile
 
-DIR = os.path.join(os.path.expanduser("~"), ".ninjatrader-operator")
+DIR = nt_local.DIR
 BASE = os.environ.get("NT_ADDON_URL", "http://127.0.0.1:8765")
 NT_EXE_DEFAULT = r"C:\Program Files\NinjaTrader 8\bin\NinjaTrader.exe"
 LIVE_STAGES = ("live-small", "live")
@@ -62,12 +64,8 @@ DEFAULT_CONFIG = {
 }
 
 
-def config_path() -> str:
-    return os.environ.get("NT_LAUNCHER_CONFIG") or os.path.join(DIR, "launcher.json")
-
-
-def state_path() -> str:
-    return os.environ.get("NT_LAUNCHER_STATE") or os.path.join(DIR, "launcher_state.json")
+config_path = nt_local.launcher_config_path
+state_path = nt_local.launcher_state_path
 
 
 def pause_path() -> str:
@@ -116,10 +114,23 @@ def save_state(state: dict, path: str = "") -> None:
 
 # --- I/O (replaced in tests) -------------------------------------------------------------------------------------
 
-def nt_running() -> bool:
-    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq NinjaTrader.exe", "/NH"], capture_output=True, text=True,
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
-    return "NinjaTrader.exe" in out
+nt_running = nt_local.nt_running
+login_window_open = nt_local.login_window_open
+
+
+def supervisor_alive() -> bool:
+    """True if the supervisor daemon's heartbeat is fresh: it (and the watcher) will report a stuck NinjaTrader, so
+    the launcher does not send a second alert for the same thing. Any doubt counts as not alive."""
+    try:
+        import sup_daemon
+        import sup_incidents
+        con = sup_incidents.connect()
+        try:
+            return not sup_daemon.status(con)["heartbeat_stale"]
+        finally:
+            con.close()
+    except Exception:
+        return False
 
 
 def start_nt(exe: str) -> None:
@@ -199,10 +210,7 @@ def in_window(now: datetime, cfg: dict, start_key: str, end_key: str = "") -> bo
 def weekend_closed(now: datetime, cfg: dict) -> bool:
     """True from Friday `weekend_close` until Sunday `weekend_reopen` (local time). The launcher does nothing then:
     it neither starts NinjaTrader nor enables anything. Holidays are not modelled."""
-    from zoneinfo import ZoneInfo
-    local = now.astimezone(ZoneInfo(cfg["timezone"]))
-    wd, t = local.weekday(), local.time()
-    return wd == 5 or (wd == 4 and t >= _hm(cfg["weekend_close"])) or (wd == 6 and t < _hm(cfg["weekend_reopen"]))
+    return sessions.weekend_closed(now, cfg["timezone"], _hm(cfg["weekend_close"]), _hm(cfg["weekend_reopen"]))
 
 
 def live_targets(rcon, profiles: list) -> tuple:
@@ -248,7 +256,9 @@ def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: boo
     io = io or {}
     running = io.get("nt_running", nt_running)
     start = io.get("start_nt", start_nt)
+    at_login = io.get("login_window_open", login_window_open)
     _fetch, _post, _alert = io.get("fetch", fetch), io.get("post", post), io.get("alert", alert)
+    sup_up = io.get("supervisor_alive", supervisor_alive)
     out = []
 
     def say(msg):
@@ -256,7 +266,11 @@ def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: boo
 
     day = now.astimezone(__import__("zoneinfo").ZoneInfo(cfg["timezone"])).date().isoformat()
     if state.get("day") != day:
+        # New day: forget enables and attempts, but keep what describes the running NinjaTrader. Dropping
+        # launched_at at midnight meant a late-evening relaunch stuck at login was never alerted.
+        keep = {k: state[k] for k in ("launched_at", "stuck_alerted") if k in state}
         state.clear()
+        state.update(keep)
         state["day"] = day
     if not cfg["enabled"]:
         return ["launcher is disabled in config (\"enabled\": false); doing nothing"]
@@ -282,14 +296,30 @@ def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: boo
             control.audit("launcher_start_nt", {"exe": cfg["nt_exe"]}, {"ok": True}, "scheduled launch")
         return out + ["waiting for the add-on to come up"]
 
-    # NinjaTrader is up. If the add-on never answers, it is most likely sitting at the NinjaTrader login window
-    # (the launcher cannot log in for you). Alert once per day, whatever the time, so an overnight restart is noticed.
+    # NinjaTrader is up. If the add-on does not answer, it is most likely sitting at its login window (the launcher
+    # cannot log in for you). Alert at once if that window is seen, whoever started NinjaTrader (a reboot, a manual
+    # start), or after CONNECT_TIMEOUT if the launcher started it. Once per stuck episode, whatever the time.
     stuck = _fetch("/health")
     launched = state.get("launched_at")
-    if "error" in stuck and launched and apply and not state.get("stuck_alerted")             and now - datetime.fromisoformat(launched) > CONNECT_TIMEOUT:
-        state["stuck_alerted"] = True
-        _alert("NinjaTrader is running but its add-on is not answering after 10 min. It is probably waiting at the "
-               "NinjaTrader login window: log in on the PC.")
+    login = "error" in stuck and at_login()
+    if login:
+        say("NinjaTrader is at its login window; waiting for someone to log in")
+    if "error" not in stuck:
+        state.pop("stuck_alerted", None)
+    elif apply and not state.get("stuck_alerted"):
+        msg = ""
+        if login:
+            msg = ("NinjaTrader is waiting at its login window, so nothing can trade. Log in on the PC "
+                   "(NinjaTrader does not remember the password across restarts).")
+        elif launched and now - datetime.fromisoformat(launched) > CONNECT_TIMEOUT:
+            msg = ("NinjaTrader is running but its add-on is not answering after 10 min. It is probably waiting at "
+                   "the NinjaTrader login window: log in on the PC.")
+        if msg:
+            state["stuck_alerted"] = True
+            if sup_up():
+                say("add-on down; the supervisor is running and reports it, so no launcher alert")
+            else:
+                _alert(msg)
     if not cfg["auto_enable"]:
         return out + ["NinjaTrader running; auto_enable is false"]
     if not in_window(now, cfg, "enable_from", "enable_until"):
@@ -393,24 +423,32 @@ def main(argv) -> int:
                          indent=2))
         return 0
     apply = "--apply" in argv
+    now = datetime.now(timezone.utc)
     try:
         cfg = load_config()
         profiles = sup_profile.load()
     except ValueError as e:
         print(f"refusing to run: {e}", file=sys.stderr)
+        if apply:
+            nt_local.write_launcher_heartbeat(now, False, f"refusing to run: {e}")
         return 2
     state = load_state()
-    rcon = registry.connect()
     try:
-        lines = tick(cfg, state, rcon, profiles, datetime.now(timezone.utc), apply)
-    finally:
-        rcon.close()
+        rcon = registry.connect()
+        try:
+            lines = tick(cfg, state, rcon, profiles, now, apply)
+        finally:
+            rcon.close()
+    except Exception as e:
+        if apply:
+            nt_local.write_launcher_heartbeat(now, False, f"tick failed: {type(e).__name__}: {e}")
+        raise
     if apply:
         save_state(state)
+        nt_local.write_launcher_heartbeat(now, True, lines[-1] if lines else "")
     for line in lines:
         print(("" if apply else "[plan] ") + line)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

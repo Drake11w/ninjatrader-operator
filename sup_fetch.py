@@ -5,6 +5,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
+import nt_local
+
 BASE = os.environ.get("NT_ADDON_URL", "http://127.0.0.1:8765")
 TIMEOUT = 5
 
@@ -24,4 +26,9 @@ def fetch(path: str, base: str = "", timeout: float = TIMEOUT) -> dict:
 
 
 def observe(base: str = "") -> dict:
-    return {"health": fetch("/health", base), "strategies": fetch("/strategies", base)}
+    obs = {"health": fetch("/health", base), "strategies": fetch("/strategies", base)}
+    if not (obs["health"]["ok"] and obs["strategies"]["ok"]):
+        # Only when the add-on is not answering: is NinjaTrader running, or stuck at its login window? Read from
+        # Windows (process list and window titles), not from NinjaTrader; it never touches the platform.
+        obs["process"] = nt_local.process_state()
+    return obs

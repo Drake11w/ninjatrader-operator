@@ -28,8 +28,10 @@ GATE_ENV = {"NT_OPERATOR_ALLOW_LIVE_SMALL": "1", "NT_OPERATOR_LIVE_SMALL_ACCOUNT
 
 
 class Io:
-    def __init__(self, running=True, health=GOOD_HEALTH, strategies=(), positions=()):
+    def __init__(self, running=True, health=GOOD_HEALTH, strategies=(), positions=(), login=False):
         self.is_running, self.health, self.strats, self.pos = running, health, list(strategies), list(positions)
+        self.login = login
+        self.sup_alive = False
         self.started, self.posts, self.alerts = [], [], []
 
     def dict(self):
@@ -45,7 +47,8 @@ class Io:
             self.strats.append(q["name"])
             return {"ok": True}
         return {"nt_running": lambda: self.is_running, "start_nt": self.started.append, "fetch": fetch,
-                "post": post, "alert": self.alerts.append}
+                "post": post, "alert": self.alerts.append, "login_window_open": lambda: self.login,
+                "supervisor_alive": lambda: self.sup_alive}
 
 
 class LauncherTests(unittest.TestCase):
@@ -121,6 +124,59 @@ class LauncherTests(unittest.TestCase):
         io = Io(health={"error": "down"})  # not yet 10 minutes
         self.tick(io, now=datetime(2026, 11, 9, 12, 5, tzinfo=timezone.utc), state=dict(st))
         self.assertEqual(io.alerts, [])
+
+    def test_login_window_alerts_at_once_without_launch_record(self):
+        # NinjaTrader started by a reboot or by hand, sitting at its login window: no launched_at, still alerts.
+        io = Io(health={"error": "down"}, login=True)
+        out, st = self.tick(io, now=MON_6CT)
+        self.assertEqual(len(io.alerts), 1)
+        self.assertIn("login window", io.alerts[0])
+        self.assertTrue(any("login window" in line for line in out))
+        self.tick(io, now=MON_6CT, state=st)
+        self.assertEqual(len(io.alerts), 1)
+
+    def test_running_supervisor_reports_stuck_login_instead(self):
+        io = Io(health={"error": "down"}, login=True)
+        io.sup_alive = True
+        out, st = self.tick(io, now=MON_6CT)
+        self.assertEqual(io.alerts, [])
+        self.assertTrue(st["stuck_alerted"])
+        self.assertTrue(any("supervisor" in line for line in out))
+
+    def test_heartbeat_written_even_when_refusing_to_run(self):
+        cfg = os.path.join(self.tmp.name, "launcher.json")
+        with open(cfg, "w") as f:
+            f.write('{"enabled": true, "enable_from": "7:3O"}')
+        with mock.patch.dict(os.environ, {"NT_LAUNCHER_CONFIG": cfg}):
+            self.assertEqual(launcher.main(["--apply"]), 2)
+            hb = launcher.nt_local.read_launcher_heartbeat()
+        self.assertFalse(hb["ok"])
+        self.assertIn("bad time", hb["detail"])
+
+    def test_login_window_not_alerted_in_plan_mode(self):
+        io = Io(health={"error": "down"}, login=True)
+        self.tick(io, now=MON_6CT, apply=False)
+        self.assertEqual(io.alerts, [])
+
+    def test_stuck_alert_survives_midnight(self):
+        # Relaunched at 23:50 CT Sunday, still stuck at 00:30 CT Monday: the alert must still fire.
+        st = {"day": "2026-11-08", "launched_at": datetime(2026, 11, 9, 5, 50, tzinfo=timezone.utc).isoformat()}
+        io = Io(health={"error": "down"})
+        self.tick(io, now=datetime(2026, 11, 9, 6, 30, tzinfo=timezone.utc), state=st)
+        self.assertEqual(st["day"], "2026-11-09")
+        self.assertEqual(len(io.alerts), 1)
+
+    def test_stuck_alert_rearms_after_recovery(self):
+        st = {"day": "2026-11-09"}
+        io = Io(health={"error": "down"}, login=True)
+        self.tick(io, now=MON_6CT, state=st)
+        io.health = GOOD_HEALTH
+        io.login = False
+        self.tick(io, now=MON_6CT, state=st)
+        self.assertNotIn("stuck_alerted", st)
+        io.health, io.login = {"error": "down"}, True
+        self.tick(io, now=MON_6CT, state=st)
+        self.assertEqual(len(io.alerts), 2)
 
     def test_no_enable_after_window(self):
         io = Io()

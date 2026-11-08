@@ -20,10 +20,16 @@ answer, and no strategy is enabled until someone logs in on the PC.
   (06:12) was a manual login by the user. Whether NinjaTrader can keep the session at all is unknown.
 - The login window has no "remember me" option.
 - This is the NinjaTrader account login, not a broker connection. `/health` lists only the `Simulation` connection.
+- NinjaTrader staff have said on their forum that 8.1 cannot skip the password at launch and has no command-line
+  login. There is no setting in `Config.xml` for it either. Option 1 below is therefore effectively closed.
 
 **What the launcher does about it today.** Nothing can log in for it, by design (it never handles credentials). If
-NinjaTrader is up but the add-on has not answered 10 minutes after the launcher started it, it raises one toast per
-day (and a push if `NT_WATCH_PUSH_URL` is set). Strategies are not enabled until the add-on answers, so nothing runs.
+the add-on is not answering and a NinjaTrader window titled "Welcome" is visible, it alerts on that tick, whoever
+started NinjaTrader (launcher, reboot, by hand). Failing that, it alerts 10 minutes after it started NinjaTrader
+itself. One toast (and a push if `NT_WATCH_PUSH_URL` is set) per stuck episode; it re-arms once the add-on answers,
+and the launch record survives midnight. If the supervisor daemon is running, the launcher stays quiet and the supervisor's `addon_unreachable` incident (cause `login_window`) is the alert instead, pushed by the watcher. Strategies are not enabled until the add-on answers, so nothing runs.
+Before 2026-11-08 the alert was lost if NinjaTrader was relaunched before midnight CT or was not started by the
+launcher.
 
 **Impact.** A crash, Windows update reboot, or manual close while away stops trading until a person logs in.
 
