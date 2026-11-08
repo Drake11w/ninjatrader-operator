@@ -32,8 +32,10 @@ def toast(title: str, text: str) -> None:
           "$n.Icon = [System.Drawing.SystemIcons]::Warning; $n.Visible = $true; "
           f"$n.ShowBalloonTip(10000, '{title}', '{text}', 'Warning'); Start-Sleep -Seconds 11; $n.Dispose()")
     try:
-        subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # CREATE_NO_WINDOW: never create a console window (even a brief one steals focus from fullscreen games).
+        subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except OSError:
         pass
 

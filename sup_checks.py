@@ -9,12 +9,32 @@ between cycles by the daemon. Stale data is labelled and suppresses every check 
 
 Finding: {"key", "severity" (1-3), "account", "strategy", "trigger", "evidence", "caused_by"}.
 `caused_by` is the key of an infrastructure finding that explains this one.
+
+obs may also carry "process": {"nt_running", "login_window"} (local Windows facts, gathered only when the add-on
+is not answering) so addon_unreachable can say why. During the CME weekend (sessions.weekend_closed) a closed or
+disconnected NinjaTrader is expected and not reported, and outside a profile's active_ct window its instances are
+not expected to exist. Account checks run at all times.
 """
 from datetime import datetime, timezone
+
+import sessions
+import sup_profile
 
 STALE_SECONDS = 30
 UNREACHABLE_AFTER = 3
 CONNECTED = "connected"
+WEEKEND_MUTED = ("addon_unreachable", "data_stale", "account_disconnected", "feed_disconnected")
+
+
+def unreachable_cause(process) -> tuple:
+    """(cause code, human sentence) for an unreachable add-on, from the local process facts (None = unknown)."""
+    if not process:
+        return "unknown", ""
+    if not process.get("nt_running"):
+        return "nt_not_running", "NinjaTrader is not running"
+    if process.get("login_window"):
+        return "login_window", "NinjaTrader is at its login window: log in on the PC"
+    return "addon_not_answering", "NinjaTrader is running but the add-on does not answer (still starting, or broken)"
 
 
 def _finding(key, severity, account, strategy, trigger, evidence=None, caused_by=""):
@@ -49,6 +69,7 @@ def evaluate(obs, profiles, state, now, recent_disables=()):
              "not_running": dict(state.get("not_running", {})), "missing": dict(state.get("missing", {}))}
     findings = []
     stale_sources = []
+    closed = sessions.weekend_closed(now)
 
     # --- reachability and staleness, per source ---------------------------------------------------------------
     usable = {}
@@ -56,10 +77,14 @@ def evaluate(obs, profiles, state, now, recent_disables=()):
         o = obs[src]
         if not o["ok"]:
             state["fail_counts"][src] = state["fail_counts"].get(src, 0) + 1
-            if state["fail_counts"][src] >= UNREACHABLE_AFTER:
+            if state["fail_counts"][src] >= UNREACHABLE_AFTER and not any(
+                    f["key"] == "addon_unreachable" for f in findings):
+                cause, why = unreachable_cause(obs.get("process"))
                 findings.append(_finding("addon_unreachable", 2, "", "",
-                                         f"/{src} failed {state['fail_counts'][src]} cycles in a row",
-                                         {"source": src, "error": o.get("error")}))
+                                         (f"{why}; " if why else "")
+                                         + f"/{src} failed {state['fail_counts'][src]} cycles in a row",
+                                         {"source": src, "error": o.get("error"), "cause": cause,
+                                          "process": obs.get("process")}))
             stale_sources.append(src)
             continue
         state["fail_counts"][src] = 0
@@ -115,8 +140,13 @@ def evaluate(obs, profiles, state, now, recent_disables=()):
             if not p.get("monitored", True):
                 continue
             cause = broken_accounts.get(p["account"], "")
+            off = closed or not sup_profile.is_active(p, now)
             for name in p["instance_names"]:
                 k = _pkey(p, name)
+                if off:  # not expected to exist now: no timers, and a stop at the end of the window is not news
+                    for d in ("not_running", "missing", "running"):
+                        state[d].pop(k, None)
+                    continue
                 row = next((r for r in rows if r.get("name") == name and r.get("account") == p["account"]), None)
                 if cause:  # infrastructure explains it; do not blame the strategy, and keep timers from running on
                     state["not_running"].pop(k, None)
@@ -152,6 +182,8 @@ def evaluate(obs, profiles, state, now, recent_disables=()):
         # strategy data is unusable this cycle: keep timers and last-running marks untouched, report nothing new
         pass
 
+    if closed:
+        findings = [f for f in findings if f["key"] not in WEEKEND_MUTED]
     for f in findings:
         if f["key"] in ("addon_unreachable", "data_stale"):
             continue
