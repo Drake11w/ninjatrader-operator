@@ -238,7 +238,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (path == "/strategy/purge")
             {
                 if (!StrategyStartAllowed()) { code = 403; return Err("strategy control is locked: set NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment"); }
-                return DoStrategyRows(a, ctx.Request.QueryString["confirm"] == "1", ctx.Request.QueryString["name"]);
+                return DoStrategyRows(a, ctx.Request.QueryString["confirm"] == "1", ctx.Request.QueryString["name"],
+                    ctx.Request.QueryString["stale"] == "1");
             }
             if (path == "/flatten") return DoFlatten(a, instrument);
             if (path == "/cancel_all") return DoCancelAll(a, instrument);
@@ -452,6 +453,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         //   GET  /strategy/rows                         lists every strategy object NinjaTrader still holds (read-only)
         //   POST /strategy/purge?account=X              dry run: lists the ones it WOULD remove
         //   POST /strategy/purge?account=X&confirm=1    removes them (optional &name=<exact name> for one)
+        //   POST /strategy/purge?account=X&confirm=1&name=<exact name>&stale=1
+        //                                               also removes a stopped (Configure) row with that exact name, flat. The launcher
+        //                                               uses this to clear a leg's old row right before it enables the leg again, so the
+        //                                               tab does not collect a new pair of rows every day.
         // Only a Finalized or Terminated (already stopped), flat strategy is removed; Realtime never. A Configure object is removed only
         // when it duplicates a running strategy (same name and account) and is named with &name=. Same guards as
         // /strategy/disable. Removal calls StrategiesGrid.StrategyRemove (what right-click Remove uses) on the main UI
@@ -468,7 +473,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private static string SafeAccount(StrategyBase o) { try { return o.Account != null ? o.Account.Name : ""; } catch { return null; } }
         private static string SafeState(StrategyBase o) { try { return o.State.ToString(); } catch { return null; } }
 
-        private string DoStrategyRows(Account account, bool remove, string onlyName)
+        private string DoStrategyRows(Account account, bool remove, string onlyName, bool staleNamed = false)
         {
             string problem = null;
             MethodInfo rm = null;
@@ -505,7 +510,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // A Configure object is also removable if it is a duplicate of a RUNNING strategy (same name and account) AND the
                 // caller named it explicitly. Templates and never-started rows without a running twin are never removed.
                 if (!stopped && state == "Configure" && !string.IsNullOrEmpty(onlyName) && name == onlyName)
-                    stopped = all.Any(o => !object.ReferenceEquals(o, st) && SafeName(o) == name && SafeAccount(o) == acct && SafeState(o) == "Realtime");
+                    stopped = staleNamed
+                        || all.Any(o => !object.ReferenceEquals(o, st) && SafeName(o) == name && SafeAccount(o) == acct && SafeState(o) == "Realtime");
                 bool eligible = account != null && acct == account.Name && stopped && flat
                     && (string.IsNullOrEmpty(onlyName) || name == onlyName);
                 string outcome = "";

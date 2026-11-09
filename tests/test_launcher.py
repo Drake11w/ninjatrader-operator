@@ -33,7 +33,7 @@ class Io:
         self.is_running, self.health, self.strats, self.pos = running, health, list(strategies), list(positions)
         self.login = login
         self.sup_alive = False
-        self.started, self.posts, self.alerts = [], [], []
+        self.started, self.posts, self.alerts, self.purges = [], [], [], []
 
     def dict(self):
         def fetch(p):
@@ -44,6 +44,9 @@ class Io:
             if p == "/status":
                 return {"accounts": [{"name": self.acct, "positions": self.pos}]}
         def post(p, q, b):
+            if p == "/strategy/purge":
+                self.purges.append(q)
+                return {"ok": True, "removed": 1, "errors": 0}
             self.posts.append((p, q))
             self.strats.append(q["name"])
             return {"ok": True}
@@ -279,6 +282,26 @@ class LauncherTests(unittest.TestCase):
         out = launcher.tick({**self.cfg, "enable_sim": False}, {}, self.con, profiles, MON_8CT, True, io.dict())
         self.assertEqual(io.posts, [])
         self.assertIn("no live strategy to start", out[-1])
+
+
+    def test_old_rows_cleared_before_enable_only(self):
+        io = Io()
+        out, _ = self.tick(io)
+        self.assertEqual([q["name"] for q in io.purges], ["sx 1.0.0 a", "sx 1.0.0 b"])
+        self.assertTrue(all(q["stale"] == "1" and q["confirm"] == "1" and q["account"] == ACC for q in io.purges))
+        self.assertTrue(any("removed 2 old stopped row(s)" in line for line in out), out)
+        io = Io()
+        self.tick(io, apply=False)
+        self.assertEqual(io.purges, [])
+
+    def test_failed_clear_does_not_block_enable(self):
+        io = Io()
+        d = io.dict()
+        real = d["post"]
+        d["post"] = lambda p, q, b: {"ok": False, "error": "not found"} if p == "/strategy/purge" else real(p, q, b)
+        out = launcher.tick(self.cfg, {}, self.con, PROFILES, MON_8CT, True, d)
+        self.assertEqual(len(io.posts), 2)
+        self.assertTrue(any("could not clear old rows" in line for line in out), out)
 
 
 if __name__ == "__main__":
