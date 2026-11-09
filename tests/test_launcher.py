@@ -28,7 +28,8 @@ GATE_ENV = {"NT_OPERATOR_ALLOW_LIVE_SMALL": "1", "NT_OPERATOR_LIVE_SMALL_ACCOUNT
 
 
 class Io:
-    def __init__(self, running=True, health=GOOD_HEALTH, strategies=(), positions=(), login=False):
+    def __init__(self, running=True, health=GOOD_HEALTH, strategies=(), positions=(), login=False, acct=ACC):
+        self.acct = acct
         self.is_running, self.health, self.strats, self.pos = running, health, list(strategies), list(positions)
         self.login = login
         self.sup_alive = False
@@ -39,9 +40,9 @@ class Io:
             if p == "/health":
                 return self.health
             if p == "/strategies":
-                return {"strategies": [{"name": n, "account": ACC, "state": "Realtime"} for n in self.strats]}
+                return {"strategies": [{"name": n, "account": self.acct, "state": "Realtime"} for n in self.strats]}
             if p == "/status":
-                return {"accounts": [{"name": ACC, "positions": self.pos}]}
+                return {"accounts": [{"name": self.acct, "positions": self.pos}]}
         def post(p, q, b):
             self.posts.append((p, q))
             self.strats.append(q["name"])
@@ -250,6 +251,34 @@ class LauncherTests(unittest.TestCase):
         t, problems = launcher.live_targets(self.con, split)
         self.assertEqual(t, [])
         self.assertEqual(len(problems), 1)
+
+
+    def _sim_setup(self, account):
+        mock.patch.object(registry, "list_specs",
+                          lambda c, status="": [{"id": "sx", "version": "1.0.0"}] if status == "sim" else []).start()
+        mock.patch.object(registry, "get_spec", lambda c, i, v: {"status": "sim", "spec": SPEC}).start()
+        profiles = [{**p, "account": account} for p in PROFILES]
+        health = {"connections": [{"account": account, "status": "Connected", "price_status": "Connected"}]}
+        return profiles, Io(health=health, acct=account)
+
+    def test_sim_stage_enabled_on_sim_account(self):
+        profiles, io = self._sim_setup("Sim101")
+        with mock.patch.dict(os.environ, {"NT_OPERATOR_ALLOW_LIVE_SMALL": "0"}):
+            out = launcher.tick(self.cfg, {}, self.con, profiles, MON_8CT, True, io.dict())
+        self.assertEqual([q["name"] for _, q in io.posts], ["sx 1.0.0 a", "sx 1.0.0 b"], out)
+        self.assertTrue(all(q["account"] == "Sim101" for _, q in io.posts))
+
+    def test_sim_stage_never_on_real_account(self):
+        profiles, io = self._sim_setup(ACC)
+        out = launcher.tick(self.cfg, {}, self.con, profiles, MON_8CT, True, io.dict())
+        self.assertEqual(io.posts, [])
+        self.assertTrue(any("Sim* account" in line for line in out), out)
+
+    def test_sim_stage_off_in_config(self):
+        profiles, io = self._sim_setup("Sim101")
+        out = launcher.tick({**self.cfg, "enable_sim": False}, {}, self.con, profiles, MON_8CT, True, io.dict())
+        self.assertEqual(io.posts, [])
+        self.assertIn("no live strategy to start", out[-1])
 
 
 if __name__ == "__main__":

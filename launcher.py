@@ -8,14 +8,15 @@
 
 Deliberately separate from the read-only supervisor daemon (sup_*.py has no POST path and keeps it that way).
 
-What "the live strategy" means: every registry spec whose status is exactly 'live-small' or 'live'. The account
-comes from the supervisor profile of that strategy, so there is one place that says where a strategy runs.
+What "the live strategy" means: every registry spec whose status is exactly 'live-small' or 'live', plus (with
+"enable_sim": true, the default) every 'sim' spec, which may only run on a Sim* account. The account comes from the
+supervisor profile of that strategy, so there is one place that says where a strategy runs.
 
 A tick is idempotent and never blocks. Order of steps:
   1. Weekend closure (Fri 16:00 CT to Sun 16:45 CT), paused, or not enabled in config: do nothing.
   2. NinjaTrader not running (any time the exchange is open, so a crash overnight is recovered): start it minimized and without taking focus (at most once per 10 minutes).
   3. Add-on unreachable, or the account's connection / data feed not Connected: wait (alert after a timeout).
-  4. Inside the enable window (weekdays, default 07:30-15:00 CT): for each live strategy: if any of its legs is already in /strategies, leave it alone. Otherwise enable it, but
+  4. Inside the enable window (weekdays, default 07:30-15:00 CT): for each live (or sim) strategy: if any of its legs is already in /strategies, leave it alone. Otherwise enable it, but
      only if it passes the same gates as deploy_strategy_live_small, the account is flat and nothing else is
      running on it, and it has not already been enabled today.
 
@@ -47,6 +48,7 @@ DIR = nt_local.DIR
 BASE = os.environ.get("NT_ADDON_URL", "http://127.0.0.1:8765")
 NT_EXE_DEFAULT = r"C:\Program Files\NinjaTrader 8\bin\NinjaTrader.exe"
 LIVE_STAGES = ("live-small", "live")
+SIM_STAGE = "sim"
 RELAUNCH_MIN = timedelta(minutes=10)
 CONNECT_TIMEOUT = timedelta(minutes=10)
 MAX_ATTEMPTS = 3
@@ -54,6 +56,7 @@ DEFAULT_CONFIG = {
     "enabled": False,               # master switch: nothing happens until you set this to true
     "launch_nt": True,
     "auto_enable": True,
+    "enable_sim": True,             # also enable 'sim'-stage strategies (Sim* accounts only)
     "nt_exe": NT_EXE_DEFAULT,
     "timezone": "America/Chicago",  # the strategies' own clock (08:30 CT open)
     "days": [0, 1, 2, 3, 4],        # Monday = 0
@@ -197,6 +200,19 @@ def live_gate(account: str, status: str):
     return None
 
 
+def target_gate(account: str, status: str):
+    """Gate for one launcher target: 'sim' strategies only on a Sim* account, live stages through live_gate."""
+    if status == SIM_STAGE:
+        if not account.lower().startswith("sim"):
+            return f"'sim' strategies are only auto-enabled on a Sim* account, not '{account}'"
+        return None  # the add-on still requires NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment
+    return live_gate(account, status)
+
+
+def auto_stages(cfg: dict) -> tuple:
+    return LIVE_STAGES + ((SIM_STAGE,) if cfg.get("enable_sim", True) else ())
+
+
 def in_window(now: datetime, cfg: dict, start_key: str, end_key: str = "") -> bool:
     """Is local time (cfg timezone) inside [start, end) on a configured day? No end = until midnight."""
     from zoneinfo import ZoneInfo
@@ -213,10 +229,10 @@ def weekend_closed(now: datetime, cfg: dict) -> bool:
     return sessions.weekend_closed(now, cfg["timezone"], _hm(cfg["weekend_close"]), _hm(cfg["weekend_reopen"]))
 
 
-def live_targets(rcon, profiles: list) -> tuple:
-    """([{id, version, account, spec}], [problem strings]) for every live-stage spec."""
+def live_targets(rcon, profiles: list, stages: tuple = LIVE_STAGES) -> tuple:
+    """([{id, version, account, spec}], [problem strings]) for every spec in one of `stages`."""
     targets, problems = [], []
-    for st in LIVE_STAGES:
+    for st in stages:
         for s in registry.list_specs(rcon, status=st):
             mine = [p for p in profiles if p["strategy_id"] == s["id"] and p["version"] == s["version"]]
             accounts = sorted({p["account"] for p in mine})
@@ -327,7 +343,7 @@ def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: boo
 
     # 3. add-on and connection
     health = _fetch("/health")
-    targets, problems = live_targets(rcon, profiles)
+    targets, problems = live_targets(rcon, profiles, auto_stages(cfg))
     for p in problems:
         say(f"PROBLEM: {p}")
     if not targets:
@@ -345,7 +361,7 @@ def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: boo
                 _alert(f"NinjaTrader has been up {int((now - started).total_seconds() // 60)} min but {why}. "
                        "Check the connection / login.")
             continue
-        gate = live_gate(t["account"], t["status"])
+        gate = target_gate(t["account"], t["status"])
         if gate:
             say(f"{label}: refused, {gate}")
             continue
@@ -388,7 +404,7 @@ def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: boo
         res = handoff.enable_spec(t["spec"], t["account"], lambda p, q, b: _post(p, q, b), _fetch, now.date(),
                                   skip_defaults=True)
         control.audit("launcher_enable_strategy", {"id": t["id"], "version": t["version"], "account": t["account"]},
-                      res, "scheduled auto-enable of the live strategy")
+                      res, f"scheduled auto-enable ({t['status']})")
         if res.get("ok"):
             done[key] = now.isoformat()
             say(f"{label}: enabled, states {res.get('verified_states')}")
