@@ -18,7 +18,8 @@ A tick is idempotent and never blocks. Order of steps:
   3. Add-on unreachable, or the account's connection / data feed not Connected: wait (alert after a timeout).
   4. Inside the enable window (weekdays, default 07:30-15:00 CT): for each live (or sim) strategy: if any of its legs is already in /strategies, leave it alone. Otherwise enable it, but
      only if it passes the same gates as deploy_strategy_live_small, the account is flat and nothing else is
-     running on it, and it has not already been enabled today.
+     running on it, and it has not already been enabled today. Right before enabling, the old stopped rows of its
+     legs are removed from the Strategies tab (/strategy/purge with stale=1), so the tab keeps one row per leg.
 
 "Once per day" is the safety valve: if you stop a strategy by hand, the launcher does not start it again until
 tomorrow. Failed attempts are retried up to MAX_ATTEMPTS per day, then it alerts and stops trying.
@@ -267,6 +268,26 @@ def _positions(status: dict, account: str) -> list:
     return []
 
 
+def clear_stale_rows(account: str, names: list, _post) -> str:
+    """Remove the stopped rows a leg left behind in the Strategies tab (NinjaTrader keeps a stopped strategy as a
+    Configure row, and a restart restores it), so enabling again does not add a second copy. Only exact leg names, only
+    flat, never a running one (the add-on checks). Best effort: a failure is reported and the enable goes ahead."""
+    removed, problems = 0, []
+    for name in names:
+        res = _post("/strategy/purge", {"account": account, "name": name, "confirm": "1", "stale": "1"}, "")
+        if res.get("ok"):
+            removed += int(res.get("removed", 0))
+            if res.get("errors"):
+                problems.append(f"{name}: {res['errors']} row(s) could not be removed")
+        else:
+            problems.append(f"{name}: {res.get('error')}")
+    if removed or problems:
+        control.audit("launcher_clear_stale_rows", {"account": account, "names": names},
+                      {"removed": removed, "problems": problems}, "clear old rows before enabling")
+    parts = [f"removed {removed} old stopped row(s)"] if removed else []
+    return "; ".join(parts + [f"could not clear old rows ({'; '.join(problems)})"] if problems else parts)
+
+
 def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: bool, io=None) -> list:
     """One pass. Returns human-readable lines describing what it did (or would do). Mutates `state`."""
     io = io or {}
@@ -401,6 +422,9 @@ def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: boo
         if not apply:
             continue
         tries[key] = tries.get(key, 0) + 1
+        cleared = clear_stale_rows(t["account"], sorted(names), _post)
+        if cleared:
+            say(f"{label}: {cleared}")
         res = handoff.enable_spec(t["spec"], t["account"], lambda p, q, b: _post(p, q, b), _fetch, now.date(),
                                   skip_defaults=True)
         control.audit("launcher_enable_strategy", {"id": t["id"], "version": t["version"], "account": t["account"]},

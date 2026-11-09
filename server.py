@@ -597,12 +597,13 @@ def list_strategy_rows() -> str:
 
 
 @mcp.tool()
-def purge_strategy_rows(account: str, confirm: bool = False, name: str = "", reason: str = "") -> str:
+def purge_strategy_rows(account: str, confirm: bool = False, name: str = "", stale: bool = False,
+                        reason: str = "") -> str:
     """Remove stale rows from the Strategies tab for one account: only rows that are NOT enabled, not running
     (Historical/Transition/Realtime) and flat. Same account guards as disable_strategy. confirm=false (default) is a
-    dry run that lists what it would remove; confirm=true removes them. `name` limits it to one exact row name.
-    Audited. Experimental: the add-on endpoint is uncompiled until you press F5."""
-    params = {"account": account, "name": name, "confirm": "1" if confirm else ""}
+    dry run that lists what it would remove; confirm=true removes them. `name` limits it to one exact row name;
+    with stale=true (needs `name`) a stopped Configure row of that exact name is removable too. Audited. Experimental: the add-on endpoint is uncompiled until you press F5."""
+    params = {"account": account, "name": name, "confirm": "1" if confirm else "", "stale": "1" if stale and name else ""}
     return _control("purge_strategy_rows", "/strategy/purge", params, reason)
 
 
