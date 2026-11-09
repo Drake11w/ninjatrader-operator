@@ -139,6 +139,22 @@ def get_strategies(account: str = "") -> str:
 
 
 @mcp.tool()
+def download_history(instrument: str, start: str, end: str = "", bar_type: str = "Minute", bar_value: int = 1) -> str:
+    """Download historical bars from NinjaTrader to a CSV (read-only; merges into any existing file, so re-run to update).
+    instrument e.g. 'MNQ 12-26' (the front month merges earlier contracts). start/end are YYYY-MM-DD (end defaults to
+    today). bar_type is Tick, Second, Minute or Day. Times in the CSV are NinjaTrader local time (bar close)."""
+    import history
+    from datetime import date
+    try:
+        s = date.fromisoformat(start)
+        e = date.fromisoformat(end) if end else date.today()
+    except ValueError:
+        return json.dumps({"ok": False, "error": "start and end must be YYYY-MM-DD"})
+    history.ADDON = BASE
+    return json.dumps(history.download(instrument, s, e, bar_type, bar_value), indent=2)
+
+
+@mcp.tool()
 def sync_journal(strategy: str = "", version: str = "", limit: int = 500) -> str:
     """Save NinjaTrader's recent fills into the local SQLite journal (safe to repeat; duplicates are skipped).
     New rows are tagged with the strategy and leg of any registered spec in sim/live-small/live whose

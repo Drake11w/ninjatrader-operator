@@ -108,6 +108,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 else if (ctx.Request.Url.AbsolutePath == "/strategies") body = BuildStrategies();
                 else if (ctx.Request.Url.AbsolutePath == "/strategy/rows") body = DoStrategyRows(null, false, null);
                 else if (ctx.Request.Url.AbsolutePath == "/health") body = BuildHealth();
+                else if (ctx.Request.Url.AbsolutePath == "/history") body = BuildHistory(ctx, out code);
                 else if (ctx.Request.Url.AbsolutePath == "/backtest/job") body = BuildBacktestJob(QueryInt(ctx, "id", 0), ctx.Request.QueryString["trades"] == "1");
                 else if (ctx.Request.Url.AbsolutePath == "/debug/types") body = BuildTypes(ctx.Request.QueryString["filter"], ctx.Request.QueryString["members"] == "1");
                 else { code = 404; body = "{\"error\":\"not found\"}"; }
@@ -906,6 +907,65 @@ namespace NinjaTrader.NinjaScript.AddOns
             string v = ctx.Request.QueryString[key];
             int n;
             return int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n) && n > 0 ? Math.Min(n, 5000) : def;
+        }
+
+        // Read-only historical bars through NinjaTrader's own BarsRequest (the data the Strategy Analyzer uses).
+        // GET /history?instrument=MNQ%2012-26&type=Minute&value=1&from=2026-01-01&to=2026-01-31
+        // Bar times are NinjaTrader local time (bar close), "yyyy-MM-ddTHH:mm:ss". Capped at 250000 bars per call.
+        // NOT yet compiled in NT8: BarsRequest usage is unverified.
+        private string BuildHistory(HttpListenerContext ctx, out int code)
+        {
+            code = 200;
+            string inst = ctx.Request.QueryString["instrument"];
+            string type = ctx.Request.QueryString["type"] ?? "Minute";
+            DateTime from, to;
+            int value = QueryInt(ctx, "value", 1);
+            if (string.IsNullOrEmpty(inst)) { code = 400; return Err("instrument is required"); }
+            if (!DateTime.TryParse(ctx.Request.QueryString["from"], CultureInfo.InvariantCulture, DateTimeStyles.None, out from)
+                || !DateTime.TryParse(ctx.Request.QueryString["to"], CultureInfo.InvariantCulture, DateTimeStyles.None, out to)
+                || to < from) { code = 400; return Err("from and to (yyyy-MM-dd) are required, to >= from"); }
+            to = to.Date.AddDays(1).AddSeconds(-1);
+            BarsPeriodType bpt;
+            if (!Enum.TryParse(type, true, out bpt) || (bpt != BarsPeriodType.Minute && bpt != BarsPeriodType.Second
+                && bpt != BarsPeriodType.Tick && bpt != BarsPeriodType.Day))
+            { code = 400; return Err("type must be Tick, Second, Minute or Day"); }
+            Instrument instrument = Instrument.GetInstrument(inst);
+            if (instrument == null) { code = 404; return Err("unknown instrument '" + inst + "'"); }
+
+            string error = null;
+            var done = new ManualResetEvent(false);
+            BarsRequest req = new BarsRequest(instrument, from, to);
+            req.BarsPeriod = new BarsPeriod { BarsPeriodType = bpt, Value = value };
+            req.MergePolicy = MergePolicy.MergeBackAdjusted;
+            req.TradingHours = instrument.MasterInstrument.TradingHours;
+            try
+            {
+                req.Request((r, ec, msg) =>
+                {
+                    if (ec != ErrorCode.NoError) error = ec + ": " + msg;
+                    done.Set();
+                });
+                if (!done.WaitOne(TimeSpan.FromSeconds(90))) { code = 504; return Err("BarsRequest timed out after 90s"); }
+                if (error != null) { code = 502; return Err(error); }
+                var sb = new StringBuilder();
+                int n = req.Bars == null ? 0 : req.Bars.Count;
+                bool truncated = n > 250000;
+                if (truncated) n = 250000;
+                sb.Append("{\"ok\":true,\"instrument\":").Append(Q(instrument.FullName));
+                sb.Append(",\"type\":").Append(Q(bpt.ToString())).Append(",\"value\":").Append(value.ToString(CultureInfo.InvariantCulture));
+                sb.Append(",\"count\":").Append(n.ToString(CultureInfo.InvariantCulture));
+                sb.Append(",\"truncated\":").Append(truncated ? "true" : "false").Append(",\"bars\":[");
+                for (int i = 0; i < n; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    sb.Append("[").Append(Q(req.Bars.GetTime(i).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)));
+                    sb.Append(",").Append(Num(req.Bars.GetOpen(i))).Append(",").Append(Num(req.Bars.GetHigh(i)));
+                    sb.Append(",").Append(Num(req.Bars.GetLow(i))).Append(",").Append(Num(req.Bars.GetClose(i)));
+                    sb.Append(",").Append(req.Bars.GetVolume(i).ToString(CultureInfo.InvariantCulture)).Append("]");
+                }
+                return sb.Append("]}").ToString();
+            }
+            finally { req.Dispose(); }
         }
 
         private static string Ts(DateTime t)
