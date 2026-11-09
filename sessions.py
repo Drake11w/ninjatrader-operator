@@ -101,3 +101,14 @@ def session_info(now: datetime = None, instrument: str = "", roll_days_before: i
             else f"front month is {front['contract']}; {instrument} may be thin or expired"}
     out["warnings"] = ["exchange holidays and early closes are not modelled; check the CME calendar"]
     return out
+
+
+def weekend_closed(now: datetime, tz: str = "America/Chicago", close: time = time(16, 0),
+                   reopen: time = time(16, 45)) -> bool:
+    """True from Friday `close` until Sunday `reopen`, local time in `tz` (default: the CME weekend in Central time,
+    with 15 minutes of slack before the 17:00 CT Sunday open). Shared by the launcher (which goes quiet) and the
+    supervisor (which stops reporting a closed NinjaTrader as an incident). Holidays are not modelled."""
+    from zoneinfo import ZoneInfo
+    local = now.astimezone(ZoneInfo(tz))
+    wd, t = local.weekday(), local.time()
+    return wd == 5 or (wd == 4 and t >= close) or (wd == 6 and t < reopen)

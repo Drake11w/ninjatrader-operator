@@ -139,6 +139,22 @@ def get_strategies(account: str = "") -> str:
 
 
 @mcp.tool()
+def download_history(instrument: str, start: str, end: str = "", bar_type: str = "Minute", bar_value: int = 1) -> str:
+    """Download historical bars from NinjaTrader to a CSV (read-only; merges into any existing file, so re-run to update).
+    instrument e.g. 'MNQ 12-26' (the front month merges earlier contracts). start/end are YYYY-MM-DD (end defaults to
+    today). bar_type is Tick, Second, Minute or Day. Times in the CSV are NinjaTrader local time (bar close)."""
+    import history
+    from datetime import date
+    try:
+        s = date.fromisoformat(start)
+        e = date.fromisoformat(end) if end else date.today()
+    except ValueError:
+        return json.dumps({"ok": False, "error": "start and end must be YYYY-MM-DD"})
+    history.ADDON = BASE
+    return json.dumps(history.download(instrument, s, e, bar_type, bar_value), indent=2)
+
+
+@mcp.tool()
 def sync_journal(strategy: str = "", version: str = "", limit: int = 500) -> str:
     """Save NinjaTrader's recent fills into the local SQLite journal (safe to repeat; duplicates are skipped).
     New rows are tagged with the strategy and leg of any registered spec in sim/live-small/live whose
@@ -597,12 +613,13 @@ def list_strategy_rows() -> str:
 
 
 @mcp.tool()
-def purge_strategy_rows(account: str, confirm: bool = False, name: str = "", reason: str = "") -> str:
+def purge_strategy_rows(account: str, confirm: bool = False, name: str = "", stale: bool = False,
+                        reason: str = "") -> str:
     """Remove stale rows from the Strategies tab for one account: only rows that are NOT enabled, not running
     (Historical/Transition/Realtime) and flat. Same account guards as disable_strategy. confirm=false (default) is a
-    dry run that lists what it would remove; confirm=true removes them. `name` limits it to one exact row name.
-    Audited. Experimental: the add-on endpoint is uncompiled until you press F5."""
-    params = {"account": account, "name": name, "confirm": "1" if confirm else ""}
+    dry run that lists what it would remove; confirm=true removes them. `name` limits it to one exact row name;
+    with stale=true (needs `name`) a stopped Configure row of that exact name is removable too. Audited. Experimental: the add-on endpoint is uncompiled until you press F5."""
+    params = {"account": account, "name": name, "confirm": "1" if confirm else "", "stale": "1" if stale and name else ""}
     return _control("purge_strategy_rows", "/strategy/purge", params, reason)
 
 

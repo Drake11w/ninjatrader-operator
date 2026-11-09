@@ -22,6 +22,10 @@ if ($Remove) {
 }
 
 $py = (Get-Command $Python -ErrorAction Stop).Source
+# Use pythonw.exe (no console window). python.exe opens a console on every run, which steals focus from a
+# fullscreen game and kicks you back to the desktop.
+$pyw = Join-Path (Split-Path -Parent $py) "pythonw.exe"
+if (Test-Path $pyw) { $py = $pyw } else { Write-Warning "pythonw.exe not found next to $py; a console window will flash on each run. Pass -Python <path to pythonw.exe>." }
 $action = New-ScheduledTaskAction -Execute $py -Argument "`"$Script`"" -WorkingDirectory $Repo
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `

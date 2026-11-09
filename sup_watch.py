@@ -3,19 +3,41 @@
     python sup_watch.py            prints one line per NEW alert, or nothing if there is nothing new (exit 0)
     python sup_watch.py --notify   also shows a Windows toast, and POSTs to NT_WATCH_PUSH_URL if set (opt-in)
 
-It reports (1) a stale or missing daemon heartbeat, once until the daemon recovers, and (2) each active severity >= 2
-incident once. What it already reported is remembered in supervisor.sqlite, so repeated runs do not repeat alerts.
+It reports (1) a stale or missing daemon heartbeat, once until the daemon recovers, (2) each active severity >= 2
+incident once, and (3) when the launcher is switched on ("enabled": true in launcher.json) but has never run, has not
+run for LAUNCHER_STALE (scheduled task stopped or removed), or its last run failed (for example a broken config),
+once per kind of problem until it recovers. What it already reported is remembered in supervisor.sqlite, so repeated runs do not repeat alerts.
 Read-only toward NinjaTrader; it does not touch it at all. Whatever consumes the output (a phone push) gets
 information only.
 """
 import os
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+import nt_local
 import sup_alerts
 import sup_daemon
 import sup_incidents
+
+
+LAUNCHER_STALE = timedelta(minutes=75)  # the launcher task runs every 30 minutes: two missed runs plus slack
+
+
+def launcher_problem(now):
+    """(kind, sentence) if the enabled launcher is not working, else None. Off in config = nothing to watch."""
+    if not nt_local.launcher_enabled():
+        return None
+    hb = nt_local.read_launcher_heartbeat()
+    if hb is None:
+        return "never", "is enabled but has never run (is its scheduled task installed?)"
+    age = now - hb["at"]
+    if age > LAUNCHER_STALE:
+        return "stale", (f"has not run for {int(age.total_seconds() // 60)} min "
+                         "(scheduled task stopped, disabled or removed?)")
+    if not hb["ok"]:
+        return "failed", f"last run failed: {hb['detail']}"
+    return None
 
 
 def check(con, now=None) -> list:
@@ -34,6 +56,17 @@ def check(con, now=None) -> list:
     elif dead_reported:
         out.append("Supervisor is running again.")
         sup_incidents.set_state(con, "watch_dead_reported", False)
+
+    lp = launcher_problem(now)
+    l_reported = sup_incidents.get_state(con, "watch_launcher_reported", "")
+    if lp and lp[0] != l_reported:
+        out.append(f"LAUNCHER NOT WORKING: the launcher {lp[1]}. NinjaTrader will not be restarted and the live "
+                   "strategy will not be enabled.")
+        sup_incidents.set_state(con, "watch_launcher_reported", lp[0])
+    elif not lp and l_reported:
+        if nt_local.launcher_enabled():
+            out.append("Launcher is running again.")
+        sup_incidents.set_state(con, "watch_launcher_reported", "")
 
     active = [i for i in sup_incidents.list_incidents(con, "active") if i["severity"] >= 2]
     for i in active:

@@ -126,6 +126,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 else if (ctx.Request.Url.AbsolutePath == "/strategy/rows") body = DoStrategyRows(null, false, null);
                 else if (ctx.Request.Url.AbsolutePath == "/health") body = BuildHealth();
                 else if (ctx.Request.Url.AbsolutePath == "/recovery") body = BuildRecovery();
+                else if (ctx.Request.Url.AbsolutePath == "/history") body = BuildHistory(ctx, out code);
                 else if (ctx.Request.Url.AbsolutePath == "/backtest/job") body = BuildBacktestJob(QueryInt(ctx, "id", 0), ctx.Request.QueryString["trades"] == "1");
                 else if (ctx.Request.Url.AbsolutePath == "/debug/types") body = BuildTypes(ctx.Request.QueryString["filter"], ctx.Request.QueryString["members"] == "1");
                 else { code = 404; body = "{\"error\":\"not found\"}"; }
@@ -256,7 +257,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (path == "/strategy/purge")
             {
                 if (!StrategyStartAllowed()) { code = 403; return Err("strategy control is locked: set NT_OPERATOR_ALLOW_STRATEGY_START=1 in NinjaTrader's environment"); }
-                return DoStrategyRows(a, ctx.Request.QueryString["confirm"] == "1", ctx.Request.QueryString["name"]);
+                return DoStrategyRows(a, ctx.Request.QueryString["confirm"] == "1", ctx.Request.QueryString["name"],
+                    ctx.Request.QueryString["stale"] == "1");
             }
             if (path == "/flatten") return DoFlatten(a, instrument);
             if (path == "/cancel_all") return DoCancelAll(a, instrument);
@@ -470,6 +472,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         //   GET  /strategy/rows                         lists every strategy object NinjaTrader still holds (read-only)
         //   POST /strategy/purge?account=X              dry run: lists the ones it WOULD remove
         //   POST /strategy/purge?account=X&confirm=1    removes them (optional &name=<exact name> for one)
+        //   POST /strategy/purge?account=X&confirm=1&name=<exact name>&stale=1
+        //                                               also removes a stopped (Configure) row with that exact name, flat. The launcher
+        //                                               uses this to clear a leg's old row right before it enables the leg again, so the
+        //                                               tab does not collect a new pair of rows every day.
         // Only a Finalized or Terminated (already stopped), flat strategy is removed; Realtime never. A Configure object is removed only
         // when it duplicates a running strategy (same name and account) and is named with &name=. Same guards as
         // /strategy/disable. Removal calls StrategiesGrid.StrategyRemove (what right-click Remove uses) on the main UI
@@ -486,7 +492,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private static string SafeAccount(StrategyBase o) { try { return o.Account != null ? o.Account.Name : ""; } catch { return null; } }
         private static string SafeState(StrategyBase o) { try { return o.State.ToString(); } catch { return null; } }
 
-        private string DoStrategyRows(Account account, bool remove, string onlyName)
+        private string DoStrategyRows(Account account, bool remove, string onlyName, bool staleNamed = false)
         {
             string problem = null;
             MethodInfo rm = null;
@@ -523,7 +529,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // A Configure object is also removable if it is a duplicate of a RUNNING strategy (same name and account) AND the
                 // caller named it explicitly. Templates and never-started rows without a running twin are never removed.
                 if (!stopped && state == "Configure" && !string.IsNullOrEmpty(onlyName) && name == onlyName)
-                    stopped = all.Any(o => !object.ReferenceEquals(o, st) && SafeName(o) == name && SafeAccount(o) == acct && SafeState(o) == "Realtime");
+                    stopped = staleNamed
+                        || all.Any(o => !object.ReferenceEquals(o, st) && SafeName(o) == name && SafeAccount(o) == acct && SafeState(o) == "Realtime");
                 bool eligible = account != null && acct == account.Name && stopped && flat
                     && (string.IsNullOrEmpty(onlyName) || name == onlyName);
                 string outcome = "";
@@ -918,6 +925,65 @@ namespace NinjaTrader.NinjaScript.AddOns
             string v = ctx.Request.QueryString[key];
             int n;
             return int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n) && n > 0 ? Math.Min(n, 5000) : def;
+        }
+
+        // Read-only historical bars through NinjaTrader's own BarsRequest (the data the Strategy Analyzer uses).
+        // GET /history?instrument=MNQ%2012-26&type=Minute&value=1&from=2026-01-01&to=2026-01-31
+        // Bar times are NinjaTrader local time (bar close), "yyyy-MM-ddTHH:mm:ss". Capped at 250000 bars per call.
+        // NOT yet compiled in NT8: BarsRequest usage is unverified.
+        private string BuildHistory(HttpListenerContext ctx, out int code)
+        {
+            code = 200;
+            string inst = ctx.Request.QueryString["instrument"];
+            string type = ctx.Request.QueryString["type"] ?? "Minute";
+            DateTime from, to;
+            int value = QueryInt(ctx, "value", 1);
+            if (string.IsNullOrEmpty(inst)) { code = 400; return Err("instrument is required"); }
+            if (!DateTime.TryParse(ctx.Request.QueryString["from"], CultureInfo.InvariantCulture, DateTimeStyles.None, out from)
+                || !DateTime.TryParse(ctx.Request.QueryString["to"], CultureInfo.InvariantCulture, DateTimeStyles.None, out to)
+                || to < from) { code = 400; return Err("from and to (yyyy-MM-dd) are required, to >= from"); }
+            to = to.Date.AddDays(1).AddSeconds(-1);
+            BarsPeriodType bpt;
+            if (!Enum.TryParse(type, true, out bpt) || (bpt != BarsPeriodType.Minute && bpt != BarsPeriodType.Second
+                && bpt != BarsPeriodType.Tick && bpt != BarsPeriodType.Day))
+            { code = 400; return Err("type must be Tick, Second, Minute or Day"); }
+            Instrument instrument = Instrument.GetInstrument(inst);
+            if (instrument == null) { code = 404; return Err("unknown instrument '" + inst + "'"); }
+
+            string error = null;
+            var done = new ManualResetEvent(false);
+            BarsRequest req = new BarsRequest(instrument, from, to);
+            req.BarsPeriod = new BarsPeriod { BarsPeriodType = bpt, Value = value };
+            req.MergePolicy = MergePolicy.MergeBackAdjusted;
+            req.TradingHours = instrument.MasterInstrument.TradingHours;
+            try
+            {
+                req.Request((r, ec, msg) =>
+                {
+                    if (ec != ErrorCode.NoError) error = ec + ": " + msg;
+                    done.Set();
+                });
+                if (!done.WaitOne(TimeSpan.FromSeconds(90))) { code = 504; return Err("BarsRequest timed out after 90s"); }
+                if (error != null) { code = 502; return Err(error); }
+                var sb = new StringBuilder();
+                int n = req.Bars == null ? 0 : req.Bars.Count;
+                bool truncated = n > 250000;
+                if (truncated) n = 250000;
+                sb.Append("{\"ok\":true,\"instrument\":").Append(Q(instrument.FullName));
+                sb.Append(",\"type\":").Append(Q(bpt.ToString())).Append(",\"value\":").Append(value.ToString(CultureInfo.InvariantCulture));
+                sb.Append(",\"count\":").Append(n.ToString(CultureInfo.InvariantCulture));
+                sb.Append(",\"truncated\":").Append(truncated ? "true" : "false").Append(",\"bars\":[");
+                for (int i = 0; i < n; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    sb.Append("[").Append(Q(req.Bars.GetTime(i).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)));
+                    sb.Append(",").Append(Num(req.Bars.GetOpen(i))).Append(",").Append(Num(req.Bars.GetHigh(i)));
+                    sb.Append(",").Append(Num(req.Bars.GetLow(i))).Append(",").Append(Num(req.Bars.GetClose(i)));
+                    sb.Append(",").Append(req.Bars.GetVolume(i).ToString(CultureInfo.InvariantCulture)).Append("]");
+                }
+                return sb.Append("]}").ToString();
+            }
+            finally { req.Dispose(); }
         }
 
         private static string Ts(DateTime t)

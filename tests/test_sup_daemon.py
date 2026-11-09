@@ -6,7 +6,11 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+from unittest import mock
+
+import nt_local
 import sup_alerts
+import sup_checks
 import sup_daemon
 import sup_fetch
 import sup_incidents
@@ -57,12 +61,17 @@ class DaemonTests(unittest.TestCase):
         os.environ["NT_SUPERVISOR_ALERT_LOG"] = os.path.join(self.tmp, "alerts.log")
         os.environ["NT_SUPERVISOR_ATTENTION"] = os.path.join(self.tmp, "attention.json")
         os.environ.pop("NT_SUPERVISOR_TOAST", None)
+        # These tests run on the wall clock and are about the daemon's mechanics, not the trading calendar or this
+        # PC's processes: pin both so they behave the same on a weekend and with NinjaTrader open or closed.
+        mock.patch.object(sup_checks.sessions, "weekend_closed", lambda now: False).start()
+        mock.patch.object(nt_local, "process_state", lambda: {"nt_running": True, "login_window": True}).start()
         self.con = sup_incidents.connect(":memory:")
         self.profiles = [sup_profile.normalize({
             "strategy_id": "s742", "version": "1.0.0", "instance_names": [NAME], "account": "Sim101",
             "authorized_accounts": ["Sim101"], "grace_seconds": 0})]
 
     def tearDown(self):
+        mock.patch.stopall()
         self.srv.shutdown()
         self.srv.server_close()
         for k in ("NT_SUPERVISOR_ALERT_LOG", "NT_SUPERVISOR_ATTENTION"):
@@ -100,6 +109,8 @@ class DaemonTests(unittest.TestCase):
         for _ in range(3):
             ev = self.cycle()
         self.assertEqual([e["key"] for e in ev], ["addon_unreachable"])
+        self.assertIn("login window", ev[0]["trigger"])
+        self.assertEqual(ev[0]["evidence"]["cause"], "login_window")
         FakeAddon.health = {"connections": [{"account": "Sim101", "status": "Connected",
                                              "price_status": "Connected"}]}
         FakeAddon.strategies = {"strategies": [{"account": "Sim101", "name": NAME, "state": "Realtime"}]}

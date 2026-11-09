@@ -4,12 +4,27 @@
       "strategy_id": "s742",
       "version": "1.0.0",
       "leg": "orb",
-      "instance_names": ["s742 1.0.0 orb"],
+      "instance_names": [
+        "s742 1.0.0 orb"
+      ],
       "account": "Sim101",
-      "authorized_accounts": ["Sim101"],
+      "authorized_accounts": [
+        "Sim101"
+      ],
       "expected_state": "Realtime",
       "grace_seconds": 60,
-      "monitored": true
+      "monitored": true,
+      "active_ct": {
+        "days": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "from": "08:15",
+        "until": "15:00"
+      }
     }
   ]
 }

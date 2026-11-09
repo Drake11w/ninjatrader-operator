@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "launch_nt": true,
+  "auto_enable": true,
+  "enable_sim": true,
+  "nt_exe": "C:/Program Files/NinjaTrader 8/bin/NinjaTrader.exe",
+  "timezone": "America/Chicago",
+  "days": [0, 1, 2, 3, 4],
+  "weekend_close": "16:00",
+  "weekend_reopen": "16:45",
+  "enable_from": "07:30",
+  "enable_until": "15:00"
+}
