@@ -113,3 +113,16 @@ def load(path: str = "") -> list:
     if problems:
         raise ValueError("; ".join(problems))
     return out
+
+
+def bindings(path: str = "") -> list:
+    """[(account, strategy_id, version)] from the profiles file, for account-aware fill tagging. An account claimed
+    by two different strategies is ambiguous and left out. Returns [] if the file is missing or invalid."""
+    try:
+        profs = load(path)
+    except ValueError:
+        return []
+    by = {}
+    for p in profs:
+        by.setdefault(p["account"], set()).add((p["strategy_id"], p["version"]))
+    return [(a, sid, ver) for a, v in by.items() if len(v) == 1 for sid, ver in v]

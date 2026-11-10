@@ -19,6 +19,7 @@ import control
 import handoff
 import journal
 import registry
+import sup_profile
 import report
 import rules
 import sessions
@@ -169,7 +170,7 @@ def sync_journal(strategy: str = "", version: str = "", limit: int = 500) -> str
         if not strategy:
             rcon = registry.connect()
             try:
-                tagger = journal.make_tagger(con, registry.order_name_map(rcon))
+                tagger = journal.make_tagger(con, registry.order_name_map(rcon, sup_profile.bindings()))
             finally:
                 rcon.close()
         execs = sorted(data["executions"], key=lambda e: e.get("time") or "")

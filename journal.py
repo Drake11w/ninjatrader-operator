@@ -60,7 +60,7 @@ def make_tagger(con: sqlite3.Connection, name_map: dict):
 
     def tagger(e):
         key = (e.get("account", ""), e.get("instrument"))
-        tag = name_map.get(e.get("order_name"))
+        tag = name_map.get((key[0], e.get("order_name"))) or name_map.get(e.get("order_name"))
         if tag:
             if e.get("is_entry"):
                 last[key] = tag
