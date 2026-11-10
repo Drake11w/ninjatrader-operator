@@ -96,10 +96,13 @@ def set_status(con: sqlite3.Connection, sid: str, version: str, to: str, note: s
     return {"ok": True, "id": sid, "version": version, "from": cur, "to": to}
 
 
-def order_name_map(con: sqlite3.Connection) -> dict:
+def order_name_map(con: sqlite3.Connection, bindings=()) -> dict:
     """{order_name: (spec id, version, leg name)} for specs that are actually trading (sim, live-small, live).
 
-    If two versions claim the same order name, the more advanced stage wins, then the newer submission."""
+    If two versions claim the same order name, the more advanced stage wins, then the newer submission.
+    Strategies commonly share order names, so `bindings` ([(account, spec id, version)], from the supervisor
+    profiles) adds {(account, order_name): tag} entries that win on that account: a fill on Sim101 belongs to the
+    strategy bound to Sim101, whatever stage another version holding the same names is in."""
     rows = con.execute("SELECT id, version, status, spec_json FROM specs WHERE status IN (?,?,?)"
                        " ORDER BY submitted_at, rowid", ("sim", "live-small", "live")).fetchall()
     rows = sorted(rows, key=lambda r: STAGES.index(r["status"]))  # stable: later submissions stay later
@@ -111,6 +114,14 @@ def order_name_map(con: sqlite3.Connection) -> dict:
         for leg in spec["legs"]:
             for name in leg["ninjascript"].get("order_names", []):
                 out[name] = (r["id"], r["version"], leg["name"])
+    bound = {(sid, ver): acct for acct, sid, ver in bindings}
+    for r in rows:
+        spec = json.loads(r["spec_json"])
+        acct = bound.get((r["id"], r["version"]))
+        if acct and spec.get("schema_version") == 2:
+            for leg in spec["legs"]:
+                for name in leg["ninjascript"].get("order_names", []):
+                    out[(acct, name)] = (r["id"], r["version"], leg["name"])
     return out
 
 

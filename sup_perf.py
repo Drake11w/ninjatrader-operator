@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import backtest
 import journal
 import registry
+import sup_profile
 import sup_behavior
 import sup_fetch
 import verdict
@@ -23,7 +24,7 @@ def _finding(key, account, strategy, trigger, evidence):
 
 
 def _sync(jcon, rcon, executions):
-    tagger = journal.make_tagger(jcon, registry.order_name_map(rcon))
+    tagger = journal.make_tagger(jcon, registry.order_name_map(rcon, sup_profile.bindings()))
     ex = sorted(executions, key=lambda e: e.get("time") or "")
     return journal.record(jcon, ex, "", "", tagger)["new"]
 

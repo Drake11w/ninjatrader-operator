@@ -102,3 +102,26 @@ class TaggingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AccountBindingTests(unittest.TestCase):
+    def test_shared_order_names_resolve_by_account(self):
+        rcon = registry.connect(":memory:")
+        a = copy.deepcopy(EXAMPLE); a["id"] = "s742"; a["version"] = "1.0.0"
+        b = copy.deepcopy(EXAMPLE); b["id"] = "s663"; b["version"] = "1.0.0"
+        for spec, to in ((a, "live-small"), (b, "sim")):
+            registry.submit(rcon, spec)
+            for st in ("backtest", "sim", "live-small"):
+                registry.set_status(rcon, spec["id"], spec["version"], st)
+                if st == to:
+                    break
+        name = a["legs"][0]["ninjascript"]["order_names"][0]
+        jcon = journal.connect(":memory:")
+        # without bindings the more advanced stage wins everywhere (the old bug)
+        tag = journal.make_tagger(jcon, registry.order_name_map(rcon))
+        self.assertEqual(tag(fill(1, ("9", "14:30:00"), name, entry=True))[0], "s742")
+        m = registry.order_name_map(rcon, [("Sim101", "s663", "1.0.0"), ("LIVE1", "s742", "1.0.0")])
+        tag = journal.make_tagger(jcon, m)
+        self.assertEqual(tag(fill(2, ("9", "14:30:00"), name, entry=True))[0], "s663")
+        live = dict(fill(3, ("9", "14:30:00"), name, entry=True), account="LIVE1")
+        self.assertEqual(tag(live)[0], "s742")

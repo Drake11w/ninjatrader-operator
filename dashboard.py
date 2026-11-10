@@ -19,6 +19,7 @@ import backtest as backtest_mod
 import comparison
 import journal
 import registry
+import sup_profile
 import rules as rules_mod
 import sup_daemon
 import sup_incidents
@@ -47,7 +48,7 @@ def _parse(ts: str):
 
 
 def sync_journal(rcon, jcon, executions: list) -> int:
-    tagger = journal.make_tagger(jcon, registry.order_name_map(rcon))
+    tagger = journal.make_tagger(jcon, registry.order_name_map(rcon, sup_profile.bindings()))
     ex = sorted(executions, key=lambda e: e.get("time") or "")
     return journal.record(jcon, ex, "", "", tagger)["new"]
 
@@ -206,6 +207,7 @@ def collect(account: str = "", sync: bool = True, fetch_fn=None, now: datetime =
         "running_in_nt": sum(1 for i in active if i["nt_running"]),
         "net_pnl_since_activation": round(sum(i["performance"]["net_pnl"] or 0 for i in active), 2),
         "pnl_today": round(sum(i["pnl_today"] for i in active), 2),
+        "floating_pnl": round(sum(a.get("unrealized_pnl") or 0 for a in nt["accounts"]), 2),
         "trades": sum(i["performance"]["trades"] or 0 for i in active),
         "verdicts": {v: sum(1 for i in active if i["verdict"]["verdict"] == v)
                      for v in ("promote", "keep_testing", "reject")},
