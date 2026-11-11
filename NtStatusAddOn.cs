@@ -959,8 +959,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     if (i > 0) sb.Append(",");
                     sb.Append("[").Append(Q(req.Bars.GetTime(i).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)));
-                    sb.Append(",").Append(Num(req.Bars.GetOpen(i))).Append(",").Append(Num(req.Bars.GetHigh(i)));
-                    sb.Append(",").Append(Num(req.Bars.GetLow(i))).Append(",").Append(Num(req.Bars.GetClose(i)));
+                    sb.Append(",").Append(NumHi(req.Bars.GetOpen(i))).Append(",").Append(NumHi(req.Bars.GetHigh(i)));
+                    sb.Append(",").Append(NumHi(req.Bars.GetLow(i))).Append(",").Append(NumHi(req.Bars.GetClose(i)));
                     sb.Append(",").Append(req.Bars.GetVolume(i).ToString(CultureInfo.InvariantCulture)).Append("]");
                 }
                 return sb.Append("]}").ToString();
@@ -1166,6 +1166,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             try { return Num(a.Get(item, Currency.UsDollar)); }
             catch { return "null"; }
+        }
+
+        // Historical bars keep up to 6 decimals (Num truncates to 4, which loses the 6J / FX tick size).
+        private static string NumHi(double v)
+        {
+            if (double.IsNaN(v) || double.IsInfinity(v)) return "null";
+            return v.ToString("0.######", CultureInfo.InvariantCulture);
         }
 
         private static string Num(double v)
