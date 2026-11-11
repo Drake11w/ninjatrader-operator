@@ -1,0 +1,25 @@
+{
+  "avg_duration_sec": null,
+  "avg_loss": null,
+  "avg_win": null,
+  "best_day": null,
+  "by_source": {
+    "live": 0,
+    "sim": 0
+  },
+  "drawdown_definition": "largest peak-to-trough fall of cumulative closed-trade net P&L in USD, trades taken in exit order, starting from zero at the first exported trade",
+  "expectancy": null,
+  "first_exit": null,
+  "last_exit": null,
+  "max_drawdown": null,
+  "net_pnl": null,
+  "profit_factor": null,
+  "sharpe": null,
+  "sortino": null,
+  "timezone": "America/Chicago",
+  "trades": 0,
+  "trading_days": null,
+  "warnings": [],
+  "win_rate": null,
+  "worst_day": null
+}

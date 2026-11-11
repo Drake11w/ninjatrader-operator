@@ -1,0 +1,174 @@
+{
+  "checks": [
+    {
+      "actual": 0.0,
+      "check": "drawdown_stop",
+      "note": "",
+      "status": "pass",
+      "threshold": 0.9
+    },
+    {
+      "actual": 0,
+      "check": "edge_decay",
+      "note": "too few Sim trades to test",
+      "status": "pending",
+      "threshold": 20
+    },
+    {
+      "actual": 0,
+      "check": "sample_trades",
+      "note": "",
+      "status": "pending",
+      "threshold": 30
+    },
+    {
+      "actual": 0,
+      "check": "sample_days",
+      "note": "",
+      "status": "pending",
+      "threshold": 20
+    }
+  ],
+  "criteria": {
+    "consistency_pct": 0.5,
+    "decay_min_trades": 20,
+    "decay_ratio": 0.5,
+    "decay_window": 20,
+    "decay_z": -2.0,
+    "drawdown_limit": 2000.0,
+    "max_consecutive_losses": 8,
+    "max_drawdown_pct": 0.5,
+    "min_days": 20,
+    "min_expectancy": 0.0,
+    "min_expectancy_ratio": 0.4,
+    "min_profit_factor": 1.2,
+    "min_trades": 30,
+    "min_win_rate_z": -2.5,
+    "reject_drawdown_pct": 0.9,
+    "reject_min_trades": 20,
+    "reject_profit_factor": 0.8
+  },
+  "edge_decayed": false,
+  "eta": "about 6 more weeks to reach 30 trades at the claimed 252/year",
+  "expected": {
+    "expectancy": {
+      "source": "backtest",
+      "value": 40.0
+    },
+    "profit_factor": {
+      "source": "backtest",
+      "value": 1.5
+    },
+    "trades_per_year": {
+      "source": "backtest",
+      "value": 252.0
+    },
+    "win_rate": {
+      "source": "backtest",
+      "value": 0.5
+    }
+  },
+  "performance": {},
+  "readiness": {
+    "criteria": [
+      {
+        "actual": "sim",
+        "key": "in_sim",
+        "note": "",
+        "progress": null,
+        "status": "pass",
+        "threshold": "sim"
+      },
+      {
+        "actual": "matches",
+        "key": "baseline",
+        "note": "",
+        "progress": null,
+        "status": "pass",
+        "threshold": "imported and checked"
+      },
+      {
+        "actual": 0,
+        "key": "sample_trades",
+        "note": "",
+        "progress": "0/30",
+        "status": "pending",
+        "threshold": 30
+      },
+      {
+        "actual": 0,
+        "key": "sample_days",
+        "note": "",
+        "progress": "0/20",
+        "status": "pending",
+        "threshold": 20
+      },
+      {
+        "actual": 8,
+        "key": "sample_weeks",
+        "note": "",
+        "progress": "8/4",
+        "status": "pass",
+        "threshold": 4
+      },
+      {
+        "actual": "keep_testing",
+        "key": "verdict",
+        "note": "sample_trades: 0/30; sample_days: 0/20",
+        "progress": null,
+        "status": "pending",
+        "threshold": "promote"
+      },
+      {
+        "actual": null,
+        "key": "no_edge_decay",
+        "note": "too few Sim trades, or no measured backtest, to test decay",
+        "progress": null,
+        "status": "pending",
+        "threshold": "no decay flag"
+      },
+      {
+        "actual": null,
+        "key": "expectancy_vs_claim",
+        "note": "no sim trades or no claimed expectancy",
+        "progress": null,
+        "status": "pending",
+        "threshold": null
+      },
+      {
+        "actual": null,
+        "key": "trade_frequency",
+        "note": "need 5 trading days to estimate a pace",
+        "progress": "0/5 days",
+        "status": "pending",
+        "threshold": [
+          0.5,
+          1.5
+        ]
+      },
+      {
+        "actual": 0,
+        "key": "untagged_fills",
+        "note": "",
+        "progress": null,
+        "status": "pass",
+        "threshold": 0
+      }
+    ],
+    "notes": [],
+    "ready": false,
+    "state": "not_ready",
+    "suggested_action": null,
+    "summary": "not ready: sample_trades 0/30, sample_days 0/20, verdict, no_edge_decay, expectancy_vs_claim, trade_frequency 0/5 days"
+  },
+  "reasons": [
+    "sample_trades: 0/30",
+    "sample_days: 0/20"
+  ],
+  "sample": {
+    "trades": 0,
+    "trading_days": 0
+  },
+  "verdict": "keep_testing",
+  "warnings": []
+}

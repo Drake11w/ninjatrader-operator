@@ -1,0 +1,13 @@
+trade_id,source,account,instrument,side,quantity,leg,entry_time,exit_time,entry_price,exit_price,entry_name,exit_name,exit_reason,duration_sec,points,gross_pnl,commission,net_pnl,trading_date_ct,slippage_ticks,mae_points,regime
+113268b3cc8d,sim,acct-1,MNQ 12-26,long,1,main,2026-09-01T14:30:00Z,2026-09-01T15:00:00Z,20000.0,20030.62,StratA long,Profit target,target,1800,30.62,61.24,1.24,60.0,2026-09-01,,,
+4f79deb83329,sim,acct-1,MNQ 12-26,long,1,main,2026-09-02T14:30:00Z,2026-09-02T15:00:00Z,20000.0,19990.62,StratA long,Stop loss,stop,1800,-9.38,-18.76,1.24,-20.0,2026-09-02,,,
+11e6d752e53c,sim,acct-1,MNQ 12-26,long,1,main,2026-09-03T14:30:00Z,2026-09-03T15:00:00Z,20000.0,20030.62,StratA long,,unknown,1800,30.62,61.24,1.24,60.0,2026-09-03,,,
+14052eea13dc,sim,acct-1,MNQ 12-26,long,1,main,2026-09-04T14:30:00Z,2026-09-04T15:00:00Z,20000.0,20030.62,StratA long,Profit target,target,1800,30.62,61.24,1.24,60.0,2026-09-04,,,
+eb97f8b83e34,sim,acct-1,MNQ 12-26,long,1,main,2026-09-07T14:30:00Z,2026-09-07T15:00:00Z,20000.0,19990.62,StratA long,Manual close,other,1800,-9.38,-18.76,1.24,-20.0,2026-09-07,,,
+c5acc903ea90,sim,acct-1,MNQ 12-26,long,1,main,2026-09-08T14:30:00Z,2026-09-08T15:00:00Z,20000.0,20030.62,StratA long,Profit target,target,1800,30.62,61.24,1.24,60.0,2026-09-08,,,
+617519861c89,sim,acct-1,MNQ 12-26,long,1,main,2026-09-09T14:30:00Z,2026-09-09T15:00:00Z,20000.0,19990.62,StratA long,StratA time exit,strategy_exit,1800,-9.38,-18.76,1.24,-20.0,2026-09-09,,,
+812673d51a5d,sim,acct-1,MNQ 12-26,long,1,main,2026-09-10T14:30:00Z,2026-09-10T15:00:00Z,20000.0,20030.62,StratA long,Profit target,target,1800,30.62,61.24,1.24,60.0,2026-09-10,,,
+4a1b8a5c26bb,sim,acct-1,MNQ 12-26,long,1,main,2026-09-11T14:30:00Z,2026-09-11T15:00:00Z,20000.0,20030.62,StratA long,Profit target,target,1800,30.62,61.24,1.24,60.0,2026-09-11,,,
+497c72c22bca,sim,acct-1,MNQ 12-26,long,1,main,2026-09-14T14:30:00Z,2026-09-14T15:00:00Z,20000.0,19990.62,StratA long,Stop loss,stop,1800,-9.38,-18.76,1.24,-20.0,2026-09-14,,,
+1457b4699772,sim,acct-1,MNQ 12-26,long,1,main,2026-09-15T14:30:00Z,2026-09-15T15:00:00Z,20000.0,20030.62,StratA long,Profit target,target,1800,30.62,61.24,1.24,60.0,2026-09-15,,,
+cf8b0be649d4,sim,acct-1,MNQ 12-26,long,1,main,2026-09-16T14:30:00Z,2026-09-16T15:00:00Z,20000.0,20030.62,StratA long,Profit target,target,1800,30.62,61.24,1.24,60.0,2026-09-16,,,

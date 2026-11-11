@@ -1,0 +1,42 @@
+{
+  "claims_check": {
+    "metrics": {
+      "expectancy": {
+        "actual": 40.0,
+        "claimed": 40.0,
+        "status": "ok"
+      },
+      "trades_per_year": {
+        "actual": 252.0,
+        "claimed": 252,
+        "status": "ok"
+      },
+      "win_rate": {
+        "actual": 0.5,
+        "claimed": 0.5,
+        "status": "ok"
+      }
+    },
+    "overall": "matches",
+    "tolerance": 0.15
+  },
+  "imported_at": "2026-08-10T00:00:00Z",
+  "kind": "trades",
+  "label": "fixture-baseline",
+  "metrics": {
+    "expectancy": 40.0,
+    "max_drawdown": 1500.0,
+    "net_per_year": 10030.0,
+    "net_pnl": 66000.0,
+    "profit_factor": 1.5,
+    "trades": 1658,
+    "trades_per_year": 252.0,
+    "win_rate": 0.5
+  },
+  "period": {
+    "end": "2026-07-31",
+    "start": "2020-01-02"
+  },
+  "present": true,
+  "run_id": 1
+}

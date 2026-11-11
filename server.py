@@ -16,8 +16,10 @@ from mcp.server.mcpserver import MCPServer
 import backtest
 import comparison
 import control
+import feedback
 import handoff
 import journal
+import nudges
 import registry
 import sup_profile
 import report
@@ -453,6 +455,49 @@ def evaluate_strategy(id: str, version: str, account: str = "", criteria: str = 
         if record:
             out["verdict_id"] = verdict.record(rcon, id, version, out["status"], out)
         return json.dumps(out, indent=2)
+    finally:
+        rcon.close()
+        jcon.close()
+
+
+@mcp.tool()
+def export_feedback(id: str, version: str, account: str = "", as_of: str = "", correction: bool = False) -> str:
+    """Write a feedback snapshot (trades, daily P&L, summary, verdict with the live-small readiness block, drift
+    flags, backtest check) for one registered strategy version into NT_FEEDBACK_DIR/<lucid_id>/<version>/<as_of>/
+    for the Lucid research side to read (layout: docs/feedback/SCHEMA.md). Run sync_journal first. Read-only toward
+    NinjaTrader and the registry: it changes no status. Account names are exported as stable aliases. Re-running with
+    unchanged results is a no-op; changed results make a new snapshot, and correction=true names the one it supersedes.
+    as_of is an optional ISO UTC time (default now)."""
+    try:
+        when = datetime.fromisoformat(as_of.replace("Z", "+00:00")) if as_of else None
+        if when is not None and when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return json.dumps({"ok": False, "error": "as_of must be an ISO time such as 2026-11-10T15:00:00Z"})
+    rcon, jcon = registry.connect(), journal.connect()
+    try:
+        return json.dumps(feedback.export(rcon, jcon, id, version, account=account, as_of=when,
+                                          correction=correction), indent=2)
+    finally:
+        rcon.close()
+        jcon.close()
+
+
+@mcp.tool()
+def list_nudges(account: str = "", as_of: str = "") -> str:
+    """Nudge list: Sim strategy versions that meet every live-small readiness criterion right now. Read-only and needs
+    no secret: it computes readiness fresh (same rules as the feedback export), stores nothing, changes no status and
+    makes no NinjaTrader call. A nudge vanishes as soon as readiness lapses. Run sync_journal first. A nudge is a
+    suggestion only; moving a version to live-small is a separate owner Approval. as_of is an optional ISO UTC time."""
+    try:
+        when = datetime.fromisoformat(as_of.replace("Z", "+00:00")) if as_of else None
+        if when is not None and when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return json.dumps({"ok": False, "error": "as_of must be an ISO time such as 2026-11-10T15:00:00Z"})
+    rcon, jcon = registry.connect(), journal.connect()
+    try:
+        return json.dumps(nudges.list_nudges(rcon, jcon, account, when), indent=2)
     finally:
         rcon.close()
         jcon.close()

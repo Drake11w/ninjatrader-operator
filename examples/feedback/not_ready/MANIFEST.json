@@ -1,0 +1,45 @@
+{
+  "as_of": "2026-10-30T12:00:00Z",
+  "content_sha256": "090d4183b219f571b609c6b32082ab8640d983f6d354c80586c47d9a39a696fb",
+  "files": {
+    "backtest_check.json": {
+      "bytes": 826,
+      "sha256": "d9e1111055a3cad3e9d4e6c734af65a65d37037e0af447b4850e7a4630d5a172"
+    },
+    "daily_pnl.csv": {
+      "bytes": 925,
+      "sha256": "b63c5f12a8835e3ad5a8550db1b46ce3f43051ab7abbb9f8672e27f266ca5e21"
+    },
+    "drift.json": {
+      "bytes": 1432,
+      "sha256": "9de607d35405b480c887cf42f588429df2f56b9f39ad333a5ba6f5d5e0b44a76"
+    },
+    "summary.json": {
+      "bytes": 661,
+      "sha256": "c977fbef294d756ff46d85655441a4571c30fbb312377fb1bb061ea2af01d9b4"
+    },
+    "trades.csv": {
+      "bytes": 6624,
+      "sha256": "3947b49c81ba1931742a1d7187e5c9f366a64bb4526d62102d3d3da1f3a70fdc"
+    },
+    "verdict.json": {
+      "bytes": 5107,
+      "sha256": "0bd32ab36c68eb3f277a68d1cb1a93df0797b48fe579eb956d76c423dbc61a0f"
+    }
+  },
+  "handoff": {
+    "bundle_version": 1,
+    "cs_sha256": {
+      "strategies/StratA.cs": "abababababababababababababababababababababababababababababababab"
+    },
+    "lucid_repo_commit": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "lucid_id": "S900",
+  "operator_commit": null,
+  "schema_version": "1.0.0",
+  "since": "2026-08-31T12:00:00Z",
+  "spec_id": "strat-a",
+  "spec_version": "1.0.0",
+  "status": "sim",
+  "supersedes": null
+}

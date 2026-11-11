@@ -1,0 +1,66 @@
+{
+  "flags": [],
+  "notes": [
+    "only 12 sim trades (need 15); flags are suppressed, numbers are shown for reference"
+  ],
+  "rows": [
+    {
+      "backtest": 40.0,
+      "difference": -6.67,
+      "flag": "low_sample",
+      "label": "Expectancy / trade ($)",
+      "metric": "expectancy",
+      "sim": 33.33
+    },
+    {
+      "backtest": 0.5,
+      "difference": 0.1667,
+      "flag": "low_sample",
+      "label": "Win rate",
+      "metric": "win_rate",
+      "sim": 0.6667
+    },
+    {
+      "backtest": 1.5,
+      "difference": 4.5,
+      "flag": "low_sample",
+      "label": "Profit factor",
+      "metric": "profit_factor",
+      "sim": 6.0
+    },
+    {
+      "backtest": 60.0,
+      "difference": 0.0,
+      "flag": "low_sample",
+      "label": "Average win ($)",
+      "metric": "avg_win",
+      "sim": 60.0
+    },
+    {
+      "backtest": -20.0,
+      "difference": 0.0,
+      "flag": "low_sample",
+      "label": "Average loss ($, negative)",
+      "metric": "avg_loss",
+      "sim": -20.0
+    },
+    {
+      "backtest": 252.0,
+      "difference": 0.0,
+      "flag": "low_sample",
+      "label": "Trades / year",
+      "metric": "trades_per_year",
+      "sim": 252.0
+    },
+    {
+      "backtest": 30.0,
+      "difference": 0.0,
+      "flag": "low_sample",
+      "label": "Median holding time (min)",
+      "metric": "avg_duration_min",
+      "sim": 30.0
+    }
+  ],
+  "sim_trades": 12,
+  "summary": "low_sample"
+}

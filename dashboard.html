@@ -131,6 +131,8 @@ function render(d){
     return `<div class="card"><div class="k">${esc(k.replace(/_/g,' '))}</div><div class="v" style="font-size:16px"><span class="pill ${r.status=='ok'?'ok':r.status=='breach'?'bad':r.status=='warning'?'warn':''}">${esc(r.status||'n/a')}</span></div><div class="sub">${t}</div></div>`}).join('')+'</div>'}
   if(nt.accounts.length){h+=`<h2>Accounts</h2><div class="cards">`+nt.accounts.map(a=>`<div class="card"><div class="k">${esc(a.name)} · ${esc(a.connection||'')}</div><div class="v">${money(a.cash_value)}</div><div class="sub">floating <b class="${(a.unrealized_pnl||0)<0?'neg':'pos'}">${money(a.unrealized_pnl)}</b> · realized ${money(a.realized_pnl)} · ${a.positions.length} position(s)</div></div>`).join('')+'</div>'}
   const act=d.strategies.filter(s=>['sim','live-small','live'].includes(s.status)),pend=d.strategies.filter(s=>['candidate','backtest'].includes(s.status)),arc=d.strategies.filter(s=>['rejected','retired'].includes(s.status));
+  const nl=(d.nudges&&d.nudges.nudges)||[];
+  if(nl.length)h+=`<h2>Ready for live-small (${nl.length})</h2><div class="cards">`+nl.map(n=>`<div class="card"><div class="k">${esc(n.name)} · ${esc(n.version)}</div><div class="v" style="font-size:15px"><span class="pill ok">READY</span></div><div class="sub">Meets every readiness criterion now. Suggestion only; no status changed. Approval is the owner's separate step.</div></div>`).join('')+'</div>';
   h+=`<h2>Active strategies (${act.length})</h2>`+(act.map(strat).join('')||'<div class="sub">None active.</div>');
   h+=`<h2>Waiting to be enabled (${pend.length})</h2>`+(pend.map(strat).join('')||'<div class="sub">None.</div>');
   if(arc.length)h+=`<h2>Rejected / retired (${arc.length})</h2>`+arc.map(strat).join('');

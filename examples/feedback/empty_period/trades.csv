@@ -1,0 +1,1 @@
+trade_id,source,account,instrument,side,quantity,leg,entry_time,exit_time,entry_price,exit_price,entry_name,exit_name,exit_reason,duration_sec,points,gross_pnl,commission,net_pnl,trading_date_ct,slippage_ticks,mae_points,regime
