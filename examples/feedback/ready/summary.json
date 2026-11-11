@@ -1,0 +1,25 @@
+{
+  "avg_duration_sec": 1800,
+  "avg_loss": -20.0,
+  "avg_win": 60.0,
+  "best_day": 60.0,
+  "by_source": {
+    "live": 0,
+    "sim": 36
+  },
+  "drawdown_definition": "largest peak-to-trough fall of cumulative closed-trade net P&L in USD, trades taken in exit order, starting from zero at the first exported trade",
+  "expectancy": 33.33,
+  "first_exit": "2026-09-01T15:00:00Z",
+  "last_exit": "2026-10-20T15:00:00Z",
+  "max_drawdown": 20.0,
+  "net_pnl": 1200.0,
+  "profit_factor": 6.0,
+  "sharpe": 13.835,
+  "sortino": 45.826,
+  "timezone": "America/Chicago",
+  "trades": 36,
+  "trading_days": 36,
+  "warnings": [],
+  "win_rate": 0.6667,
+  "worst_day": -20.0
+}

@@ -1,0 +1,239 @@
+{
+  "checks": [
+    {
+      "actual": 0.01,
+      "check": "drawdown_stop",
+      "note": "",
+      "status": "pass",
+      "threshold": 0.9
+    },
+    {
+      "actual": 0.667,
+      "check": "win_rate_vs_claim",
+      "note": "z=2.00",
+      "status": "pass",
+      "threshold": "claim 0.50 (backtest), z>=-2.5"
+    },
+    {
+      "actual": 33.33,
+      "check": "edge_decay (all Sim trades)",
+      "note": "z=-0.99",
+      "status": "pass",
+      "threshold": "backtest $40.00/trade; decayed if z<-2.0 and <50% of it"
+    },
+    {
+      "actual": 32.0,
+      "check": "edge_decay (last 20 trades)",
+      "note": "z=-0.88",
+      "status": "pass",
+      "threshold": "backtest $40.00/trade; decayed if z<-2.0 and <50% of it"
+    },
+    {
+      "actual": 36,
+      "check": "sample_trades",
+      "note": "",
+      "status": "pass",
+      "threshold": 30
+    },
+    {
+      "actual": 36,
+      "check": "sample_days",
+      "note": "",
+      "status": "pass",
+      "threshold": 20
+    },
+    {
+      "actual": 33.33,
+      "check": "expectancy",
+      "note": "",
+      "status": "pass",
+      "threshold": ">0.0"
+    },
+    {
+      "actual": 6.0,
+      "check": "profit_factor",
+      "note": "",
+      "status": "pass",
+      "threshold": ">=1.2"
+    },
+    {
+      "actual": 0.01,
+      "check": "drawdown",
+      "note": "",
+      "status": "pass",
+      "threshold": "<=0.5"
+    },
+    {
+      "actual": 0.83,
+      "check": "expectancy_vs_claim",
+      "note": "",
+      "status": "pass",
+      "threshold": ">=0.4 of $40.00 (backtest)"
+    },
+    {
+      "actual": 0.05,
+      "check": "consistency",
+      "note": "best day share of net profit",
+      "status": "pass",
+      "threshold": "<0.5"
+    },
+    {
+      "actual": 1,
+      "check": "loss_streak",
+      "note": "",
+      "status": "pass",
+      "threshold": "<=8"
+    }
+  ],
+  "criteria": {
+    "consistency_pct": 0.5,
+    "decay_min_trades": 20,
+    "decay_ratio": 0.5,
+    "decay_window": 20,
+    "decay_z": -2.0,
+    "drawdown_limit": 2000.0,
+    "max_consecutive_losses": 8,
+    "max_drawdown_pct": 0.5,
+    "min_days": 20,
+    "min_expectancy": 0.0,
+    "min_expectancy_ratio": 0.4,
+    "min_profit_factor": 1.2,
+    "min_trades": 30,
+    "min_win_rate_z": -2.5,
+    "reject_drawdown_pct": 0.9,
+    "reject_min_trades": 20,
+    "reject_profit_factor": 0.8
+  },
+  "edge_decayed": false,
+  "expected": {
+    "expectancy": {
+      "source": "backtest",
+      "value": 40.0
+    },
+    "profit_factor": {
+      "source": "backtest",
+      "value": 1.5
+    },
+    "trades_per_year": {
+      "source": "backtest",
+      "value": 252.0
+    },
+    "win_rate": {
+      "source": "backtest",
+      "value": 0.5
+    }
+  },
+  "performance": {
+    "avg_loss": -20.0,
+    "avg_win": 60.0,
+    "best_day": 60.0,
+    "expectancy": 33.33,
+    "max_drawdown": 20.0,
+    "net_pnl": 1200.0,
+    "profit_factor": 6.0,
+    "sharpe": 13.835,
+    "win_rate": 0.6667,
+    "worst_day": -20.0
+  },
+  "readiness": {
+    "criteria": [
+      {
+        "actual": "sim",
+        "key": "in_sim",
+        "note": "",
+        "progress": null,
+        "status": "pass",
+        "threshold": "sim"
+      },
+      {
+        "actual": "matches",
+        "key": "baseline",
+        "note": "",
+        "progress": null,
+        "status": "pass",
+        "threshold": "imported and checked"
+      },
+      {
+        "actual": 36,
+        "key": "sample_trades",
+        "note": "",
+        "progress": "36/30",
+        "status": "pass",
+        "threshold": 30
+      },
+      {
+        "actual": 36,
+        "key": "sample_days",
+        "note": "",
+        "progress": "36/20",
+        "status": "pass",
+        "threshold": 20
+      },
+      {
+        "actual": 8,
+        "key": "sample_weeks",
+        "note": "",
+        "progress": "8/4",
+        "status": "pass",
+        "threshold": 4
+      },
+      {
+        "actual": "promote",
+        "key": "verdict",
+        "note": "",
+        "progress": null,
+        "status": "pass",
+        "threshold": "promote"
+      },
+      {
+        "actual": "none",
+        "key": "no_edge_decay",
+        "note": "",
+        "progress": null,
+        "status": "pass",
+        "threshold": "no decay flag"
+      },
+      {
+        "actual": 0.83,
+        "key": "expectancy_vs_claim",
+        "note": "",
+        "progress": null,
+        "status": "pass",
+        "threshold": ">=0.4 of $40.00 (backtest)"
+      },
+      {
+        "actual": 1.0,
+        "key": "trade_frequency",
+        "note": "x the claimed 252 trades/year",
+        "progress": null,
+        "status": "pass",
+        "threshold": [
+          0.5,
+          1.5
+        ]
+      },
+      {
+        "actual": 0,
+        "key": "untagged_fills",
+        "note": "",
+        "progress": null,
+        "status": "pass",
+        "threshold": 0
+      }
+    ],
+    "notes": [],
+    "ready": true,
+    "state": "ready",
+    "suggested_action": null,
+    "summary": "ready"
+  },
+  "reasons": [
+    "all promotion checks passed"
+  ],
+  "sample": {
+    "trades": 36,
+    "trading_days": 36
+  },
+  "verdict": "promote",
+  "warnings": []
+}

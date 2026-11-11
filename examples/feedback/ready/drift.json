@@ -1,0 +1,64 @@
+{
+  "flags": [],
+  "notes": [],
+  "rows": [
+    {
+      "backtest": 40.0,
+      "difference": -6.67,
+      "flag": "ok",
+      "label": "Expectancy / trade ($)",
+      "metric": "expectancy",
+      "sim": 33.33
+    },
+    {
+      "backtest": 0.5,
+      "difference": 0.1667,
+      "flag": "better",
+      "label": "Win rate",
+      "metric": "win_rate",
+      "sim": 0.6667
+    },
+    {
+      "backtest": 1.5,
+      "difference": 4.5,
+      "flag": "better",
+      "label": "Profit factor",
+      "metric": "profit_factor",
+      "sim": 6.0
+    },
+    {
+      "backtest": 60.0,
+      "difference": 0.0,
+      "flag": "ok",
+      "label": "Average win ($)",
+      "metric": "avg_win",
+      "sim": 60.0
+    },
+    {
+      "backtest": -20.0,
+      "difference": 0.0,
+      "flag": "ok",
+      "label": "Average loss ($, negative)",
+      "metric": "avg_loss",
+      "sim": -20.0
+    },
+    {
+      "backtest": 252.0,
+      "difference": 0.0,
+      "flag": "ok",
+      "label": "Trades / year",
+      "metric": "trades_per_year",
+      "sim": 252.0
+    },
+    {
+      "backtest": 30.0,
+      "difference": 0.0,
+      "flag": "ok",
+      "label": "Median holding time (min)",
+      "metric": "avg_duration_min",
+      "sim": 30.0
+    }
+  ],
+  "sim_trades": 36,
+  "summary": "consistent"
+}

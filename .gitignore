@@ -1,2 +1,4 @@
 examples/*.private.*
 __pycache__/
+/handoff/
+/feedback/

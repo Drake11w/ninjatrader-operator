@@ -1,0 +1,124 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Feedback bundle returned by ninjatrader-operator to the Lucid research side. See docs/feedback/SCHEMA.md. JSON files are described with a JSON-Schema subset (type, required, properties, items, enum, const, pattern); unknown extra fields are allowed (minor versions are additive). CSV files list their ordered columns.",
+  "files": {
+    "MANIFEST.json": {
+      "type": "object",
+      "required": ["schema_version", "as_of", "lucid_id", "spec_id", "spec_version", "status", "since", "handoff", "operator_commit", "supersedes", "content_sha256", "files"],
+      "properties": {
+        "schema_version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+        "as_of": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"},
+        "lucid_id": {"type": "string", "pattern": "^S\\d{1,5}$"},
+        "spec_id": {"type": "string"},
+        "spec_version": {"type": "string"},
+        "status": {"type": "string"},
+        "since": {"type": ["string", "null"]},
+        "handoff": {"type": ["object", "null"], "properties": {
+          "bundle_version": {"type": ["integer", "string", "null"]},
+          "lucid_repo_commit": {"type": ["string", "null"]},
+          "cs_sha256": {"type": "object"}}},
+        "operator_commit": {"type": ["string", "null"]},
+        "supersedes": {"type": ["string", "null"]},
+        "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "files": {"type": "object"}
+      }
+    },
+    "summary.json": {
+      "type": "object",
+      "required": ["trades", "timezone", "drawdown_definition", "by_source", "warnings"],
+      "properties": {
+        "trades": {"type": "integer"},
+        "net_pnl": {"type": ["number", "null"]},
+        "win_rate": {"type": ["number", "null"]},
+        "avg_win": {"type": ["number", "null"]},
+        "avg_loss": {"type": ["number", "null"]},
+        "expectancy": {"type": ["number", "null"]},
+        "profit_factor": {"type": ["number", "null"]},
+        "max_drawdown": {"type": ["number", "null"]},
+        "best_day": {"type": ["number", "null"]},
+        "worst_day": {"type": ["number", "null"]},
+        "sharpe": {"type": ["number", "null"]},
+        "sortino": {"type": ["number", "null"]},
+        "trading_days": {"type": ["integer", "null"]},
+        "avg_duration_sec": {"type": ["number", "null"]},
+        "timezone": {"type": "string"},
+        "drawdown_definition": {"type": "string"},
+        "first_exit": {"type": ["string", "null"]},
+        "last_exit": {"type": ["string", "null"]},
+        "by_source": {"type": "object", "required": ["sim", "live"]},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "verdict.json": {
+      "type": "object",
+      "required": ["verdict", "edge_decayed", "reasons", "sample", "checks", "criteria", "readiness"],
+      "properties": {
+        "verdict": {"type": "string", "enum": ["promote", "keep_testing", "reject"]},
+        "edge_decayed": {"type": "boolean"},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "sample": {"type": "object", "required": ["trades", "trading_days"]},
+        "checks": {"type": "array", "items": {"type": "object", "required": ["check", "status"],
+                   "properties": {"check": {"type": "string"}, "status": {"type": "string", "enum": ["pass", "fail", "pending", "warn", "skipped"]}}}},
+        "criteria": {"type": "object"},
+        "readiness": {
+          "type": "object",
+          "required": ["state", "ready", "summary", "criteria", "notes", "suggested_action"],
+          "properties": {
+            "state": {"type": "string", "enum": ["ready", "not_ready", "rejected"]},
+            "ready": {"type": "boolean"},
+            "summary": {"type": "string"},
+            "notes": {"type": "array", "items": {"type": "string"}},
+            "suggested_action": {"type": ["string", "null"]},
+            "criteria": {"type": "array", "items": {
+              "type": "object", "required": ["key", "status", "actual", "threshold", "progress", "note"],
+              "properties": {
+                "key": {"type": "string", "enum": ["in_sim", "baseline", "sample_trades", "sample_days", "sample_weeks", "verdict", "no_edge_decay", "expectancy_vs_claim", "trade_frequency", "untagged_fills"]},
+                "status": {"type": "string", "enum": ["pass", "fail", "pending"]},
+                "progress": {"type": ["string", "null"]},
+                "note": {"type": "string"}}}}
+          }
+        }
+      }
+    },
+    "drift.json": {
+      "type": "object",
+      "required": ["summary", "flags", "rows", "notes"],
+      "properties": {
+        "summary": {"type": ["string", "null"]},
+        "flags": {"type": "array", "items": {"type": "object", "required": ["key", "severity", "detail"],
+                  "properties": {"key": {"type": "string", "pattern": "^(compare|verdict|tagging)\\.[a-z_]+$"}, "severity": {"type": "string", "enum": ["warning"]}, "detail": {"type": "string"}}}},
+        "rows": {"type": "array", "items": {"type": "object", "required": ["metric", "flag"]}},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "backtest_check.json": {
+      "type": "object",
+      "required": ["present", "run_id", "claims_check"],
+      "properties": {
+        "present": {"type": "boolean"},
+        "run_id": {"type": ["integer", "null"]},
+        "label": {"type": ["string", "null"]},
+        "kind": {"type": ["string", "null"]},
+        "period": {"type": ["object", "null"]},
+        "claims_check": {"type": ["object", "null"]},
+        "metrics": {"type": ["object", "null"]}
+      }
+    }
+  },
+  "csv": {
+    "trades.csv": {
+      "columns": ["trade_id", "source", "account", "instrument", "side", "quantity", "leg", "entry_time", "exit_time", "entry_price", "exit_price", "entry_name", "exit_name", "exit_reason", "duration_sec", "points", "gross_pnl", "commission", "net_pnl", "trading_date_ct", "slippage_ticks", "mae_points", "regime"],
+      "nullable": ["slippage_ticks", "mae_points", "regime"],
+      "enums": {"source": ["sim", "live"], "side": ["long", "short"], "exit_reason": ["stop", "target", "strategy_exit", "other", "unknown"]},
+      "numeric": ["quantity", "entry_price", "exit_price", "duration_sec", "points", "gross_pnl", "commission", "net_pnl", "slippage_ticks", "mae_points"],
+      "patterns": {"account": "^acct-\\d+$", "trading_date_ct": "^\\d{4}-\\d{2}-\\d{2}$", "trade_id": "^[0-9a-f]{12}$"}
+    },
+    "daily_pnl.csv": {
+      "columns": ["date_ct", "trades", "net_pnl", "cumulative_net_pnl"],
+      "nullable": [],
+      "enums": {},
+      "numeric": ["trades", "net_pnl", "cumulative_net_pnl"],
+      "patterns": {"date_ct": "^\\d{4}-\\d{2}-\\d{2}$"}
+    }
+  }
+}
