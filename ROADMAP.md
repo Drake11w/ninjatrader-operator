@@ -17,7 +17,7 @@ and needs to be reconciled with the real system's strategy format and metrics.
 - [x] Executions: fills with time, price, entry/exit, strategy name (source of truth for trade logs)
 - [x] (needs NT8 compile check) Strategy status: enabled/disabled, which chart/instrument, current position, last signal
 - [x] Connection health: connected/disconnected, data feed status, add-on heartbeat
-- [x] Session/market info (`get_session_info`): current session, time to RTH open/close, front-month contract roll (holidays and early closes not modelled)
+- [x] Session/market info (`get_session_info`): current session, time to RTH open/close, front-month contract roll; holidays, halt days and early closes are named from date rules (`special_session`) and skipped by the launcher, but session times are not adjusted for them
 
 ## Phase 2 - Record and analyze (still read-only)
 - [x] Trade journal: persist every execution to SQLite (survives NT restarts), tagged by strategy + version (call `sync_journal` periodically; auto-sync not built)

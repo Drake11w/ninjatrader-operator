@@ -89,14 +89,16 @@ def run_leg(spec: dict, leg: dict, wins: list, cache_dir: str, run=run_window, l
     for w in wins:
         key = os.path.join(cache_dir, f"{spec['id']}__{leg['leg']}__{w['contract']}__{w['start']}__{w['end']}.json")
         if os.path.isfile(key):
-            res = json.load(open(key, encoding="utf-8"))
+            with open(key, encoding="utf-8") as f:
+                res = json.load(f)
         else:
             res = run(leg["class"], leg["inputs"], w, spec["costs"]["slippage_ticks"])
             if not res["ok"]:
                 failed = {"window": w["instrument"], "start": str(w["start"]), "end": str(w["end"]), "error": res["error"]}
                 log(f"  {leg['leg']} {w['instrument']} FAILED: {res['error']}")
                 break
-            json.dump(res, open(key, "w", encoding="utf-8"))
+            with open(key, "w", encoding="utf-8") as f:
+                json.dump(res, f)
         got = [t for t in res["trades"] if in_window(t, w)]
         for t in got:
             t["leg"] = leg["leg"]

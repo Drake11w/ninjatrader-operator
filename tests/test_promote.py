@@ -114,7 +114,8 @@ class PromoteTests(unittest.TestCase):
         self.assertTrue(out["ok"], out)
         self.assertEqual(self.fakes.calls, ["enable:Sim101"])
         self.assertEqual(self.status(), "sim")
-        self.assertEqual(json.load(open(out["report"], encoding="utf-8"))["attempts"], 2)
+        with open(out["report"], encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["attempts"], 2)
 
     def test_second_run_is_a_noop_once_in_sim(self):
         self.run_promote()

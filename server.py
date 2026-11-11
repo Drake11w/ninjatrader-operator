@@ -285,7 +285,8 @@ def get_report(period: str = "day", date: str = "", account: str = "", strategy:
 def get_session_info(instrument: str = "") -> str:
     """Current market session (RTH, Globex overnight, maintenance break, weekend), time to the next RTH open or
     close, and the front-month futures contract with its roll date. Pass an instrument like "MNQ 12-26" to check
-    it is the front month. Computed locally; exchange holidays are not modelled."""
+    it is the front month. Computed locally; `special_session` names a holiday, halt day or early close today (from
+    date rules, so check the CME calendar), and the session times are not adjusted for it."""
     try:
         return json.dumps(sessions.session_info(instrument=instrument), indent=2)
     except Exception as e:  # missing tz database etc.
@@ -641,7 +642,7 @@ def disable_decayed_strategies(account: str, reason: str = "", dry_run: bool = T
 def install_handoff(path: str, apply: bool = False) -> str:
     """Check a Lucid handoff bundle folder (handoff/<id>/<version>): spec schema, approval flag, .cs sha256 against
     MANIFEST, inputs and order names against the C# source. With apply=false (default) it only reports the plan.
-    With apply=true it backs up and copies the .cs files into NinjaTrader's Custom\Strategies, registers the spec as
+    With apply=true it backs up and copies the .cs files into NinjaTrader's Custom/Strategies, registers the spec as
     a candidate and writes per-leg strategy templates when a fresh skeleton exists. You still compile in NinjaTrader (F5)."""
     return json.dumps(handoff.install_bundle(path, apply), indent=2)
 

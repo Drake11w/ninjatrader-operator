@@ -14,6 +14,42 @@ def et(s):
     return datetime.fromisoformat(s).replace(tzinfo=ET)
 
 
+class HolidayTests(unittest.TestCase):
+    def test_2026_calendar(self):
+        got = {d.isoformat(): n.split(" (")[1].rstrip(")") for d, n in sessions.special_sessions(2026).items()}
+        halt, early = "trading halts 12:00 CT", "early close 12:15 CT"
+        self.assertEqual(got, {
+            "2026-01-01": "closed", "2026-01-19": halt, "2026-02-16": halt, "2026-04-03": "closed",
+            "2026-05-25": halt, "2026-06-19": halt, "2026-07-03": halt, "2026-09-07": halt,
+            "2026-11-26": halt, "2026-11-27": early, "2026-12-24": early, "2026-12-25": "closed"})
+
+    def test_observed_dates(self):
+        s27 = sessions.special_sessions(2027)
+        self.assertIn("Independence Day", s27[date(2027, 7, 5)])   # Sunday -> Monday
+        self.assertIn("Christmas Day", s27[date(2027, 12, 24)])    # Saturday -> Friday
+        self.assertNotIn(date(2027, 12, 23), s27)                  # no early close before an observed Friday
+        self.assertIn("Juneteenth", s27[date(2027, 6, 18)])        # Saturday -> Friday
+        self.assertIsNone(sessions.special_sessions(2022).get(date(2022, 1, 1)))  # Saturday New Year: not observed
+        self.assertIn("New Year", sessions.special_sessions(2023)[date(2023, 1, 2)])  # Sunday -> Monday
+        self.assertIn("day before Independence Day", sessions.special_sessions(2025)[date(2025, 7, 3)])
+        self.assertTrue(all(d.weekday() < 5 for y in range(2020, 2040) for d in sessions.special_sessions(y)))
+
+    def test_easter(self):
+        self.assertEqual([sessions.easter(y) for y in (2024, 2025, 2026, 2027)],
+                         [date(2024, 3, 31), date(2025, 4, 20), date(2026, 4, 5), date(2027, 3, 28)])
+
+    def test_special_session_and_extra(self):
+        self.assertEqual(sessions.special_session(date(2026, 11, 25)), "")
+        self.assertIn("Thanksgiving", sessions.special_session(date(2026, 11, 26)))
+        self.assertEqual(sessions.special_session(date(2026, 11, 25), ["2026-11-25"]), "listed in extra_holidays")
+
+    def test_session_info_names_the_holiday(self):
+        info = sessions.session_info(et("2026-11-26T10:00:00"))
+        self.assertIn("Thanksgiving", info["special_session"])
+        self.assertEqual(len(info["warnings"]), 2)
+        self.assertIsNone(sessions.session_info(et("2026-11-25T10:00:00"))["special_session"])
+
+
 class SessionTests(unittest.TestCase):
     def test_third_friday(self):
         self.assertEqual(sessions.third_friday(2026, 12), date(2026, 12, 18))
