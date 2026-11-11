@@ -187,6 +187,45 @@ class LauncherTests(unittest.TestCase):
         self.tick(io, now=MON_16CT)
         self.assertEqual(io.posts, [])
 
+    def test_holiday_is_not_enabled_but_nt_still_starts(self):
+        thanksgiving = datetime(2026, 11, 26, 14, 0, tzinfo=timezone.utc)  # Thursday 08:00 CT
+        io = Io()
+        out, state = self.tick(io, now=thanksgiving)
+        self.assertEqual(io.posts, [])
+        self.assertIn("Thanksgiving", out[-1])
+        self.assertNotIn("enabled", state)
+        down = Io(running=False)
+        self.tick(down, now=thanksgiving)
+        self.assertEqual(len(down.started), 1)
+
+    def test_early_close_day_is_not_enabled(self):
+        io = Io()
+        out, _ = self.tick(io, now=datetime(2026, 11, 27, 14, 0, tzinfo=timezone.utc))
+        self.assertEqual(io.posts, [])
+        self.assertIn("early close", out[-1])
+
+    def test_skip_holidays_off_enables(self):
+        io = Io()
+        self.tick(io, now=datetime(2026, 11, 26, 14, 0, tzinfo=timezone.utc), cfg={**self.cfg, "skip_holidays": False})
+        self.assertEqual(len(io.posts), 2)
+
+    def test_extra_holidays(self):
+        io = Io()
+        out, _ = self.tick(io, cfg={**self.cfg, "extra_holidays": ["2026-11-09"]})
+        self.assertEqual(io.posts, [])
+        self.assertIn("extra_holidays", out[-1])
+
+    def test_holiday_config_is_validated(self):
+        path = os.path.join(self.tmp.name, "launcher.json")
+        for bad in ({"extra_holidays": ["11/26/2026"]}, {"extra_holidays": "2026-11-26"}, {"skip_holidays": "no"}):
+            with open(path, "w", encoding="utf-8") as f:
+                __import__("json").dump(bad, f)
+            with self.assertRaises(ValueError):
+                launcher.load_config(path)
+        with open(path, "w", encoding="utf-8") as f:
+            __import__("json").dump({"extra_holidays": ["2026-11-26"]}, f)
+        self.assertEqual(launcher.load_config(path)["extra_holidays"], ["2026-11-26"])
+
     def test_launches_nt_once(self):
         io = Io(running=False)
         out, st = self.tick(io)

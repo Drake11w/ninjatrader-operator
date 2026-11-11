@@ -23,7 +23,7 @@ Read-only assessment of ninjatrader-operator. No code was changed. Evidence: rep
 | Strategy registry and lifecycle | `registry.py` SQLite, immutable (id, version), stage history | Unit-tested; bookkeeping only |
 | Prop-rule distance | `rules.py`, `rules.example.json` | Unit-tested; **placeholder values**, closed-trade basis, no alerts |
 | Backtest vs sim vs live | `backtest.py`, `compare_backtest_to_journal`, `verdict.py` (`DEFAULT_CRITERIA`) | S742 verified end to end; other bundles open |
-| Session state | `sessions.py` | No holidays or early closes |
+| Session state | `sessions.py` | Holidays and early closes by date rule only (`special_session`); times not adjusted |
 | Controls | flatten, cancel_all, kill switch, enable/disable strategy, live-small deploy | Sim-gated; live-small unverified; audited in `audit.jsonl` |
 | Reconnect recovery | feature branch only | Unverified, opt-in, in-memory |
 

@@ -17,7 +17,8 @@ A tick is idempotent and never blocks. Order of steps:
   2. NinjaTrader not running (any time the exchange is open, so a crash overnight is recovered): start it minimized and without taking focus (at most once per 10 minutes).
   3. Add-on unreachable, or the account's connection / data feed not Connected: wait (alert after a timeout).
   4. Inside the enable window (weekdays, default 07:30-15:00 CT): first execute or void due scheduled approvals
-     (approvals.py; registry and audit log only, no POST), then for each live (or sim) strategy: if any of its legs is already in /strategies, leave it alone. Otherwise enable it, but
+     (approvals.py; registry and audit log only, no POST). On an exchange holiday, halt day or early close
+     (sessions.special_session, plus "extra_holidays"; "skip_holidays": false turns this off) stop here. Then for each live (or sim) strategy: if any of its legs is already in /strategies, leave it alone. Otherwise enable it, but
      only if it passes the same gates as deploy_strategy_live_small, the account is flat and nothing else is
      running on it, and it has not already been enabled today. Right before enabling, the old stopped rows of its
      legs are removed from the Strategies tab (/strategy/purge with stale=1), so the tab keeps one row per leg.
@@ -27,7 +28,7 @@ tomorrow. Failed attempts are retried up to MAX_ATTEMPTS per day, then it alerts
 
 It cannot log in for you, and NinjaTrader 8.1 asks for the password on every launch (docs/KNOWN_ISSUES.md BUG-001):
 a restart stops at the login window. The launcher alerts when it sees that window, unless the supervisor daemon is
-running (it reports the same thing). Every --apply run writes launcher_heartbeat.json for the watcher (sup_watch.py). Exchange holidays are not modelled (see sessions.py).
+running (it reports the same thing). Every --apply run writes launcher_heartbeat.json for the watcher (sup_watch.py). The holiday list is computed from date rules, not read from the exchange (see sessions.py).
 """
 import json
 import os
@@ -68,6 +69,8 @@ DEFAULT_CONFIG = {
     "weekend_reopen": "16:45",      # Sunday, local time: launcher resumes (15 min before the 5pm CT Globex open)
     "enable_from": "07:30",         # enable strategies from here (on `days` only)...
     "enable_until": "15:00",        # ...to here; never later (legs flatten at 15:40)
+    "skip_holidays": True,          # do not enable on exchange holidays, halt days and early closes (sessions.py)
+    "extra_holidays": [],           # more dates to skip, e.g. ["2027-01-04"], for closures the date rules miss
 }
 
 
@@ -91,6 +94,16 @@ def load_config(path: str = "") -> dict:
         cfg.update(raw)
     for k in ("weekend_close", "weekend_reopen", "enable_from", "enable_until"):
         _hm(cfg[k])
+    if not isinstance(cfg["skip_holidays"], bool):
+        raise ValueError("skip_holidays must be true or false")
+    try:
+        if not isinstance(cfg["extra_holidays"], list):
+            raise ValueError
+        for d in cfg["extra_holidays"]:
+            if date.fromisoformat(d).isoformat() != d:
+                raise ValueError
+    except (ValueError, TypeError):
+        raise ValueError("extra_holidays must be a list of dates like \"2027-01-04\"")
     return cfg
 
 
@@ -229,8 +242,17 @@ def in_window(now: datetime, cfg: dict, start_key: str, end_key: str = "") -> bo
 
 def weekend_closed(now: datetime, cfg: dict) -> bool:
     """True from Friday `weekend_close` until Sunday `weekend_reopen` (local time). The launcher does nothing then:
-    it neither starts NinjaTrader nor enables anything. Holidays are not modelled."""
+    it neither starts NinjaTrader nor enables anything. Holidays are handled by holiday() below."""
     return sessions.weekend_closed(now, cfg["timezone"], _hm(cfg["weekend_close"]), _hm(cfg["weekend_reopen"]))
+
+
+def holiday(now: datetime, cfg: dict) -> str:
+    """Why nothing is enabled today ('' on a normal session): an exchange holiday, a midday halt or an early close,
+    or a date in extra_holidays. On those days a leg could not hold to its usual 15:40 exit."""
+    if not cfg.get("skip_holidays", True):
+        return ""
+    from zoneinfo import ZoneInfo
+    return sessions.special_session(now.astimezone(ZoneInfo(cfg["timezone"])).date(), cfg.get("extra_holidays", ()))
 
 
 def live_targets(rcon, profiles: list, stages: tuple = LIVE_STAGES) -> tuple:
@@ -390,6 +412,10 @@ def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: boo
     # Scheduled approvals: registry-only; runs before live_targets so an executed approval is picked up this tick.
     for line in scheduled_approvals_step(rcon, now, apply, io, _alert):
         say(line)
+
+    why_not_today = holiday(now, cfg)
+    if why_not_today:
+        return out + [f"not enabling anything today: {why_not_today}"]
 
     # 3. add-on and connection
     health = _fetch("/health")

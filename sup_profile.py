@@ -8,11 +8,14 @@ File shape: {"profiles": [ {profile}, ... ]}
 
 Optional "active_ct": {"days": [0, 1, 2, 3, 4], "from": "08:15", "until": "15:00"} (Monday = 0, Central time).
 Outside that window the instance is not expected to exist, so it is never reported missing, not running or
-stopped. Without it the instance is expected around the clock. Account checks (wrong_account) apply at all times.
+stopped; the same holds for the whole day on an exchange holiday, halt day or early close (sessions.py), when the
+launcher does not enable it. Without it the instance is expected around the clock. Account checks (wrong_account) apply at all times.
 """
 import json
 import os
 from datetime import datetime, time
+
+import sessions
 
 DEFAULT_PATH = os.path.join(os.path.expanduser("~"), ".ninjatrader-operator", "supervisor_profiles.json")
 DEFAULTS = {"expected_state": "Realtime", "grace_seconds": 60, "monitored": True}
@@ -74,12 +77,15 @@ def _window_errors(w) -> list:
 
 
 def is_active(p: dict, now: datetime) -> bool:
-    """Is the profile's instance expected to exist at `now`? True when the profile has no active_ct window."""
+    """Is the profile's instance expected to exist at `now`? True when the profile has no active_ct window. Inside a
+    window, exchange holidays, halt days and early closes (sessions.special_session) count as outside it."""
     w = p.get("active_ct")
     if not w:
         return True
     from zoneinfo import ZoneInfo
     local = now.astimezone(ZoneInfo("America/Chicago"))
+    if sessions.special_session(local.date()):
+        return False  # holiday, halt day or early close: the launcher does not enable windowed strategies
     return local.weekday() in w.get("days", [0, 1, 2, 3, 4]) and _hm(w["from"]) <= local.time() < _hm(w["until"])
 
 

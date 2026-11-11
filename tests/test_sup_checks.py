@@ -80,6 +80,13 @@ class ScheduleTests(unittest.TestCase):
                    p, now=MON_1530)
         self.assertIn("wrong_account", keys(f))
 
+    def test_missing_on_a_holiday_is_not_reported(self):
+        thanksgiving = datetime(2026, 11, 26, 14, 30, tzinfo=timezone.utc)  # Thursday 08:30 CT, inside the window
+        p = [prof(active_ct=WINDOW, grace_seconds=0)]
+        f, _ = run({"health": health(at=thanksgiving), "strategies": strats(at=thanksgiving)}, p, now=thanksgiving)
+        self.assertEqual(f, [])
+        self.assertTrue(sup_profile.is_active(prof(), thanksgiving))  # no window: still expected around the clock
+
     def test_profile_without_window_is_always_active(self):
         self.assertTrue(sup_profile.is_active(prof(), MON_1530))
 
