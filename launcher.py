@@ -16,7 +16,8 @@ A tick is idempotent and never blocks. Order of steps:
   1. Weekend closure (Fri 16:00 CT to Sun 16:45 CT), paused, or not enabled in config: do nothing.
   2. NinjaTrader not running (any time the exchange is open, so a crash overnight is recovered): start it minimized and without taking focus (at most once per 10 minutes).
   3. Add-on unreachable, or the account's connection / data feed not Connected: wait (alert after a timeout).
-  4. Inside the enable window (weekdays, default 07:30-15:00 CT): for each live (or sim) strategy: if any of its legs is already in /strategies, leave it alone. Otherwise enable it, but
+  4. Inside the enable window (weekdays, default 07:30-15:00 CT): first execute or void due scheduled approvals
+     (approvals.py; registry and audit log only, no POST), then for each live (or sim) strategy: if any of its legs is already in /strategies, leave it alone. Otherwise enable it, but
      only if it passes the same gates as deploy_strategy_live_small, the account is flat and nothing else is
      running on it, and it has not already been enabled today. Right before enabling, the old stopped rows of its
      legs are removed from the Strategies tab (/strategy/purge with stale=1), so the tab keeps one row per leg.
@@ -37,8 +38,10 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, time, timedelta, timezone
 
+import approvals
 import control
 import handoff
+import journal
 import nt_local
 import registry
 import sessions
@@ -288,6 +291,28 @@ def clear_stale_rows(account: str, names: list, _post) -> str:
     return "; ".join(parts + [f"could not clear old rows ({'; '.join(problems)})"] if problems else parts)
 
 
+def scheduled_approvals_step(rcon, now: datetime, apply: bool, io: dict, alert) -> list:
+    """Execute or void due scheduled approvals (S3b). Registry and audit log only: no add-on call, no POST. A failure
+    here is reported and never stops the enable flow that follows."""
+    try:
+        if not approvals.has_pending(rcon, now):
+            return []
+        jcon = io.get("journal_con") or journal.connect()
+        try:
+            events = approvals.run_due(rcon, jcon, now, apply, io.get("readiness_fn"))
+        finally:
+            if not io.get("journal_con"):
+                jcon.close()
+    except Exception as e:  # noqa: BLE001
+        return [f"scheduled approvals: step failed ({type(e).__name__}: {e}); continuing"]
+    lines = []
+    for ev in events:
+        lines.append(f"scheduled approval #{ev['schedule_id']} {ev['id']} {ev['version']}: {ev['action']} ({ev['reason']})")
+        if apply and ev["action"] in ("executed", "voided"):
+            alert(f"Scheduled approval {ev['id']} {ev['version']} {ev['action']}: {ev['reason']}")
+    return lines
+
+
 def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: bool, io=None) -> list:
     """One pass. Returns human-readable lines describing what it did (or would do). Mutates `state`."""
     io = io or {}
@@ -361,6 +386,10 @@ def tick(cfg: dict, state: dict, rcon, profiles: list, now: datetime, apply: boo
         return out + ["NinjaTrader running; auto_enable is false"]
     if not in_window(now, cfg, "enable_from", "enable_until"):
         return out + ["NinjaTrader running; outside the enable window"]
+
+    # Scheduled approvals: registry-only; runs before live_targets so an executed approval is picked up this tick.
+    for line in scheduled_approvals_step(rcon, now, apply, io, _alert):
+        say(line)
 
     # 3. add-on and connection
     health = _fetch("/health")

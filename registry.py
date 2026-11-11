@@ -41,6 +41,31 @@ CREATE TABLE IF NOT EXISTS status_history (
     note TEXT NOT NULL DEFAULT '',
     at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
+CREATE TABLE IF NOT EXISTS live_small_approvals (
+    approval_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    account_alias TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    source TEXT NOT NULL,
+    schedule_id INTEGER,
+    approved_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scheduled_approvals (
+    schedule_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    account_alias TEXT NOT NULL,
+    not_before TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    state_reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -74,7 +99,7 @@ def submit(con: sqlite3.Connection, spec, note: str = "") -> dict:
     return out
 
 
-def set_status(con: sqlite3.Connection, sid: str, version: str, to: str, note: str = "") -> dict:
+def set_status(con: sqlite3.Connection, sid: str, version: str, to: str, note: str = "", commit: bool = True) -> dict:
     row = con.execute("SELECT status FROM specs WHERE id=? AND version=?", (sid, version)).fetchone()
     if not row:
         return {"ok": False, "error": f"{sid} {version} not found"}
@@ -92,7 +117,8 @@ def set_status(con: sqlite3.Connection, sid: str, version: str, to: str, note: s
     con.execute("UPDATE specs SET status=? WHERE id=? AND version=?", (to, sid, version))
     con.execute("INSERT INTO status_history (id, version, from_status, to_status, note) VALUES (?,?,?,?,?)",
                 (sid, version, cur, to, note))
-    con.commit()
+    if commit:  # approvals pass commit=False so the status change and the approval row land together
+        con.commit()
     return {"ok": True, "id": sid, "version": version, "from": cur, "to": to}
 
 

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from mcp.server.mcpserver import MCPServer
 
+import approvals
 import backtest
 import comparison
 import control
@@ -481,6 +482,70 @@ def export_feedback(id: str, version: str, account: str = "", as_of: str = "", c
     finally:
         rcon.close()
         jcon.close()
+
+
+def _when(as_of: str):
+    when = datetime.fromisoformat(as_of.replace("Z", "+00:00")) if as_of else None
+    if when is not None and when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+@mcp.tool()
+def approve_live_small(id: str, version: str, account_alias: str, reason: str, approval_secret: str,
+                       acknowledge_not_ready: bool = False) -> str:
+    """OWNER ONLY. Move a 'sim' version to 'live-small' (registry status only; starts nothing, and every NT_OPERATOR_*
+    gate still applies to the launcher / deploy_strategy_live_small). Needs the owner's approval_secret (checked against
+    NT_OPERATOR_APPROVAL_SECRET_SHA256 in this server's environment; never logged) and NT_OPERATOR_TOKEN. Refused unless the
+    version meets the readiness criteria, or acknowledge_not_ready=true (recorded). A non-empty reason is required.
+    account_alias is a stable local alias such as acct-1. Supersedes any pending schedule for the version. Audited."""
+    rcon, jcon = registry.connect(), journal.connect()
+    try:
+        return json.dumps(approvals.approve(rcon, jcon, id, version, account_alias, reason, approval_secret,
+                                            acknowledge_not_ready=acknowledge_not_ready), indent=2)
+    finally:
+        rcon.close()
+        jcon.close()
+
+
+@mcp.tool()
+def schedule_live_small_approval(id: str, version: str, account_alias: str, reason: str, approval_secret: str,
+                                 not_before: str, expires_at: str = "") -> str:
+    """OWNER ONLY. Store an approval that the launcher tick executes at the first tick at/after not_before (ISO UTC;
+    30-minute granularity, inside the enable window) if the version is still 'sim' and still meets readiness; else it is
+    voided. expires_at defaults to 24 h after not_before (max 7 days). One pending schedule per version: a new one
+    supersedes the old. Same secret/token rules as approve_live_small. Audited."""
+    try:
+        _when(not_before)
+    except ValueError:
+        return json.dumps({"ok": False, "error": "not_before must be an ISO UTC time such as 2026-11-12T13:30:00Z"})
+    rcon, jcon = registry.connect(), journal.connect()
+    try:
+        return json.dumps(approvals.schedule(rcon, jcon, id, version, account_alias, reason, approval_secret,
+                                             not_before, expires_at), indent=2)
+    finally:
+        rcon.close()
+        jcon.close()
+
+
+@mcp.tool()
+def cancel_scheduled_approval(schedule_id: int, approval_secret: str, reason: str = "") -> str:
+    """OWNER ONLY. Cancel a pending scheduled approval (needs the same secret as approving). Audited."""
+    rcon = registry.connect()
+    try:
+        return json.dumps(approvals.cancel(rcon, schedule_id, approval_secret, reason), indent=2)
+    finally:
+        rcon.close()
+
+
+@mcp.tool()
+def list_scheduled_approvals(state: str = "") -> str:
+    """List scheduled approvals (pending, executed, voided, cancelled, superseded), newest first. Read-only; no secret."""
+    rcon = registry.connect()
+    try:
+        return json.dumps(approvals.list_schedules(rcon, state), indent=2)
+    finally:
+        rcon.close()
 
 
 @mcp.tool()
