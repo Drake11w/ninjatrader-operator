@@ -43,11 +43,11 @@ and needs to be reconciled with the real system's strategy format and metrics.
 - [~] Experiment log: verdicts stored with `evaluate_strategy(record=true)`, read with `list_verdicts`. Still open: logging backtests/parameter variants together with verdicts
 
 ## Phase 4 - Feedback to the Lucid system
-- [ ] `get_feedback(strategy_id)`: structured results (per-trade rows + summary + verdict + drift notes)
+- [x] `export_feedback` (feedback bundle with readiness; `docs/feedback/SCHEMA.md`), `list_nudges`, `promote_strategy`, owner `approve_live_small` / scheduled approvals (`approvals.py`); rollout in `docs/LUCID_LOOP_ROLLOUT.md`. The original item: `get_feedback(strategy_id)`: structured results (per-trade rows + summary + verdict + drift notes)
       in the same schema the Lucid system consumes
 - [ ] Parameter suggestions flagged as hypotheses, not auto-applied (human or Lucid-system review gate)
 - [ ] Failure attribution: where it lost (regime, time-of-day, slippage, news days) to guide the next iteration
-- [ ] Versioned feedback files committed to a results folder/repo so the Lucid system can pull them
+- [x] (superseded: snapshots live outside git in NT_FEEDBACK_DIR, never committed) Versioned feedback files committed to a results folder/repo so the Lucid system can pull them
 
 ## Phase 5 - Controlled actions (only after Phases 1-4 are trusted)
 All of these sit behind server-side guards, not just prompts:

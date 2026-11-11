@@ -127,6 +127,31 @@ def to_trades_csv(trades: list, commission_per_side: float) -> str:
     return buf.getvalue()
 
 
+def collect_csv(spec: dict, legs: list, out_dir: str, log=print, run=run_window) -> dict:
+    """One merged run per leg over the spec's backtest range (the default `main` path), as {ok, csv, summary, error}.
+    Used by promote_strategy. `out_dir` is a scratch folder; partial window results from an earlier interrupted
+    run are discarded first so an interrupted backtest restarts from its start."""
+    import shutil
+    start, end = date.fromisoformat(spec["backtest"]["start"]), date.fromisoformat(spec["backtest"]["end"])
+    last = windows(start, end, spec["instrument"]["root"])[-1]
+    wins = [{"contract": last["contract"], "instrument": last["instrument"], "start": start, "end": end}]
+    cache = os.path.join(out_dir, "cache")
+    shutil.rmtree(cache, ignore_errors=True)
+    trades, summary = [], {}
+    for leg in legs:
+        res = run_leg(spec, leg, wins, cache, run=run, log=log)
+        summary[leg["leg"]] = {"trades": len(res["trades"]), "empty_windows": res["empty_windows"],
+                               "failed": res["failed"]}
+        if res["failed"]:
+            return {"ok": False, "error": f"leg {leg['leg']}: {res['failed']['error']}", "summary": summary}
+        trades += res["trades"]
+    return {"ok": True, "csv": to_csv_for(trades, spec), "summary": summary}
+
+
+def to_csv_for(trades: list, spec: dict) -> str:
+    return to_trades_csv(trades, spec["costs"]["commission_per_side"])
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("bundle")

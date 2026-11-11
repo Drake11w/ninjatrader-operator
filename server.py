@@ -15,12 +15,14 @@ from mcp.server.mcpserver import MCPServer
 
 import approvals
 import backtest
+import backtest_runner
 import comparison
 import control
 import feedback
 import handoff
 import journal
 import nudges
+import promote
 import registry
 import sup_profile
 import report
@@ -642,6 +644,44 @@ def install_handoff(path: str, apply: bool = False) -> str:
     With apply=true it backs up and copies the .cs files into NinjaTrader's Custom\Strategies, registers the spec as
     a candidate and writes per-leg strategy templates when a fresh skeleton exists. You still compile in NinjaTrader (F5)."""
     return json.dumps(handoff.install_bundle(path, apply), indent=2)
+
+
+@mcp.tool()
+def promote_strategy(id: str, version: str, account: str, bundle_path: str = "") -> str:
+    """One-command promotion of a Lucid handoff bundle to Sim: export check -> install (candidate) -> Strategy Analyzer
+    backtest + import (status backtest) -> spec check against expected_metrics -> enable on a Sim* account (status sim).
+    Stops at the first failed stage and leaves status at the last passed one, with no override; re-running skips
+    completed stages and resumes. Ceiling is Sim: never touches live-small or live. Needs NinjaTrader running with the
+    add-on, ONE idle Strategy Analyzer window, and NT_OPERATOR_ALLOW_STRATEGY_START=1 (for the Sim start). Single-flight:
+    a second call reports busy. Writes promotion_report.json under NT_FEEDBACK_DIR/<lucid_id>/<version>/.
+    bundle_path defaults to NT_HANDOFF_DIR/<id>/<version>. Every stage action is audited."""
+    import tempfile
+
+    def _install(path):
+        return handoff.install_bundle(path, apply=True)
+
+    def _backtest(spec, path):
+        r = handoff.inspect_bundle(path)
+        if not r["ok"]:
+            return {"ok": False, "error": "bundle: " + "; ".join(r["errors"])}
+        with tempfile.TemporaryDirectory() as scratch:
+            return backtest_runner.collect_csv(spec, r["legs"], scratch, log=lambda *_: None)
+
+    def _enable(spec, acct):
+        if os.environ.get("NT_OPERATOR_ALLOW_STRATEGY_START") != "1":
+            return {"ok": False, "error": "strategy start is locked: set NT_OPERATOR_ALLOW_STRATEGY_START=1"}
+        res = handoff.enable_spec(spec, acct, lambda p, q, b: _post(p, q, b), _fetch, skip_defaults=True)
+        control.audit("enable_strategy", {"id": spec["id"], "version": spec["version"], "account": acct}, res,
+                      "promote_strategy")
+        return res
+
+    rcon = registry.connect()
+    try:
+        return json.dumps(promote.promote(rcon, id, version, account, bundle_path,
+                                          {"install": _install, "backtest": _backtest, "enable": _enable}),
+                          indent=2, default=str)
+    finally:
+        rcon.close()
 
 
 @mcp.tool()
