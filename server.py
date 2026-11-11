@@ -13,13 +13,16 @@ from datetime import datetime, timezone
 
 from mcp.server.mcpserver import MCPServer
 
+import approvals
 import backtest
+import backtest_runner
 import comparison
 import control
 import feedback
 import handoff
 import journal
 import nudges
+import promote
 import registry
 import sup_profile
 import report
@@ -483,6 +486,70 @@ def export_feedback(id: str, version: str, account: str = "", as_of: str = "", c
         jcon.close()
 
 
+def _when(as_of: str):
+    when = datetime.fromisoformat(as_of.replace("Z", "+00:00")) if as_of else None
+    if when is not None and when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+@mcp.tool()
+def approve_live_small(id: str, version: str, account_alias: str, reason: str, approval_secret: str,
+                       acknowledge_not_ready: bool = False) -> str:
+    """OWNER ONLY. Move a 'sim' version to 'live-small' (registry status only; starts nothing, and every NT_OPERATOR_*
+    gate still applies to the launcher / deploy_strategy_live_small). Needs the owner's approval_secret (checked against
+    NT_OPERATOR_APPROVAL_SECRET_SHA256 in this server's environment; never logged) and NT_OPERATOR_TOKEN. Refused unless the
+    version meets the readiness criteria, or acknowledge_not_ready=true (recorded). A non-empty reason is required.
+    account_alias is a stable local alias such as acct-1. Supersedes any pending schedule for the version. Audited."""
+    rcon, jcon = registry.connect(), journal.connect()
+    try:
+        return json.dumps(approvals.approve(rcon, jcon, id, version, account_alias, reason, approval_secret,
+                                            acknowledge_not_ready=acknowledge_not_ready), indent=2)
+    finally:
+        rcon.close()
+        jcon.close()
+
+
+@mcp.tool()
+def schedule_live_small_approval(id: str, version: str, account_alias: str, reason: str, approval_secret: str,
+                                 not_before: str, expires_at: str = "") -> str:
+    """OWNER ONLY. Store an approval that the launcher tick executes at the first tick at/after not_before (ISO UTC;
+    30-minute granularity, inside the enable window) if the version is still 'sim' and still meets readiness; else it is
+    voided. expires_at defaults to 24 h after not_before (max 7 days). One pending schedule per version: a new one
+    supersedes the old. Same secret/token rules as approve_live_small. Audited."""
+    try:
+        _when(not_before)
+    except ValueError:
+        return json.dumps({"ok": False, "error": "not_before must be an ISO UTC time such as 2026-11-12T13:30:00Z"})
+    rcon, jcon = registry.connect(), journal.connect()
+    try:
+        return json.dumps(approvals.schedule(rcon, jcon, id, version, account_alias, reason, approval_secret,
+                                             not_before, expires_at), indent=2)
+    finally:
+        rcon.close()
+        jcon.close()
+
+
+@mcp.tool()
+def cancel_scheduled_approval(schedule_id: int, approval_secret: str, reason: str = "") -> str:
+    """OWNER ONLY. Cancel a pending scheduled approval (needs the same secret as approving). Audited."""
+    rcon = registry.connect()
+    try:
+        return json.dumps(approvals.cancel(rcon, schedule_id, approval_secret, reason), indent=2)
+    finally:
+        rcon.close()
+
+
+@mcp.tool()
+def list_scheduled_approvals(state: str = "") -> str:
+    """List scheduled approvals (pending, executed, voided, cancelled, superseded), newest first. Read-only; no secret."""
+    rcon = registry.connect()
+    try:
+        return json.dumps(approvals.list_schedules(rcon, state), indent=2)
+    finally:
+        rcon.close()
+
+
 @mcp.tool()
 def list_nudges(account: str = "", as_of: str = "") -> str:
     """Nudge list: Sim strategy versions that meet every live-small readiness criterion right now. Read-only and needs
@@ -577,6 +644,44 @@ def install_handoff(path: str, apply: bool = False) -> str:
     With apply=true it backs up and copies the .cs files into NinjaTrader's Custom\Strategies, registers the spec as
     a candidate and writes per-leg strategy templates when a fresh skeleton exists. You still compile in NinjaTrader (F5)."""
     return json.dumps(handoff.install_bundle(path, apply), indent=2)
+
+
+@mcp.tool()
+def promote_strategy(id: str, version: str, account: str, bundle_path: str = "") -> str:
+    """One-command promotion of a Lucid handoff bundle to Sim: export check -> install (candidate) -> Strategy Analyzer
+    backtest + import (status backtest) -> spec check against expected_metrics -> enable on a Sim* account (status sim).
+    Stops at the first failed stage and leaves status at the last passed one, with no override; re-running skips
+    completed stages and resumes. Ceiling is Sim: never touches live-small or live. Needs NinjaTrader running with the
+    add-on, ONE idle Strategy Analyzer window, and NT_OPERATOR_ALLOW_STRATEGY_START=1 (for the Sim start). Single-flight:
+    a second call reports busy. Writes promotion_report.json under NT_FEEDBACK_DIR/<lucid_id>/<version>/.
+    bundle_path defaults to NT_HANDOFF_DIR/<id>/<version>. Every stage action is audited."""
+    import tempfile
+
+    def _install(path):
+        return handoff.install_bundle(path, apply=True)
+
+    def _backtest(spec, path):
+        r = handoff.inspect_bundle(path)
+        if not r["ok"]:
+            return {"ok": False, "error": "bundle: " + "; ".join(r["errors"])}
+        with tempfile.TemporaryDirectory() as scratch:
+            return backtest_runner.collect_csv(spec, r["legs"], scratch, log=lambda *_: None)
+
+    def _enable(spec, acct):
+        if os.environ.get("NT_OPERATOR_ALLOW_STRATEGY_START") != "1":
+            return {"ok": False, "error": "strategy start is locked: set NT_OPERATOR_ALLOW_STRATEGY_START=1"}
+        res = handoff.enable_spec(spec, acct, lambda p, q, b: _post(p, q, b), _fetch, skip_defaults=True)
+        control.audit("enable_strategy", {"id": spec["id"], "version": spec["version"], "account": acct}, res,
+                      "promote_strategy")
+        return res
+
+    rcon = registry.connect()
+    try:
+        return json.dumps(promote.promote(rcon, id, version, account, bundle_path,
+                                          {"install": _install, "backtest": _backtest, "enable": _enable}),
+                          indent=2, default=str)
+    finally:
+        rcon.close()
 
 
 @mcp.tool()
