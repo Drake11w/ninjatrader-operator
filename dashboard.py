@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import backtest as backtest_mod
 import comparison
 import journal
+import nudges as nudges_mod
 import registry
 import sup_profile
 import rules as rules_mod
@@ -189,6 +190,10 @@ def collect(account: str = "", sync: bool = True, fetch_fn=None, now: datetime =
                     synced = sync_journal(rcon, jcon, ex.get("executions", []))
         specs = registry.list_specs(rcon)
         items = [_strategy(rcon, jcon, s, nt, account, now) for s in specs]
+        try:
+            nudge_list = nudges_mod.list_nudges(rcon, jcon, account, now)
+        except Exception as e:  # a panel must never take the dashboard down
+            nudge_list = {"nudges": [], "errors": [{"error": str(e)}]}
         rules_out = None
         try:
             cfg = rules_mod.load_rules()
@@ -215,7 +220,7 @@ def collect(account: str = "", sync: bool = True, fetch_fn=None, now: datetime =
                             if i["verdict"]["verdict"] in ("promote", "reject")],
     }
     return {"generated_at": now.isoformat(), "nt": nt, "summary": summary, "strategies": items,
-            "rules": rules_out, "supervisor": supervisor_panel(now), "journal_synced_new_fills": synced}
+            "nudges": nudge_list, "rules": rules_out, "supervisor": supervisor_panel(now), "journal_synced_new_fills": synced}
 
 
 class Handler(BaseHTTPRequestHandler):

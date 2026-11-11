@@ -58,6 +58,7 @@ class DashboardTests(unittest.TestCase):
         d = dashboard.collect(fetch_fn=fake, now=NOW)
         self.assertEqual(d["summary"]["total"], 0)
         self.assertTrue(d["nt"]["reachable"])
+        self.assertEqual(d["nudges"]["nudges"], [])
 
     def test_active_strategy_card(self):
         self.activate()

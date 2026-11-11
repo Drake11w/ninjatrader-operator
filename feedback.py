@@ -280,6 +280,35 @@ def _stamp(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def untagged_count(jcon, res: dict, spec: dict, since: str) -> int:
+    """Fills in the period, on the accounts the version traded, in its instrument, that carry no strategy tag."""
+    accounts = {t["account"] for t in res["trades"]}
+    root = (spec.get("instrument") or {}).get("root", "").upper()
+    if not accounts:
+        return 0
+    return sum(1 for r in journal.query(jcon, "", "", since, 5000)
+               if r["account"] in accounts and not r.get("strategy") and trades_mod.root(r.get("instrument")) == root)
+
+
+def readiness_for(rcon, jcon, sid: str, version: str, account: str = "", as_of: datetime = None) -> dict:
+    """Fresh readiness block for one registered version (the same inputs the export uses). Read-only; never stored."""
+    row = registry.get_spec(rcon, sid, version)
+    if "error" in row:
+        return {"error": row["error"]}
+    spec = row["spec"]
+    res = verdict.evaluate_registered(rcon, jcon, sid, version, account)
+    if "error" in res:
+        return {"error": res["error"]}
+    now_iso = (as_of or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    runs = backtest.list_runs(rcon, sid, version)
+    run = backtest.get_run(rcon, runs[0]["run_id"]) if runs else None
+    bt = backtest_doc(run, spec)
+    return readiness.evaluate(
+        res, row["status"], res.get("since", ""), now_iso,
+        {"present": bt["present"], "claims": (bt["claims_check"] or {}).get("overall")} if bt["present"] else None,
+        untagged_count(jcon, res, spec, res.get("since", "")), spec.get("readiness_overrides"))
+
+
 def export(rcon, jcon, sid: str, version: str, account: str = "", out_dir: str = "", alias_file: str = "",
            handoff_dir: str = "", as_of: datetime = None, correction: bool = False,
            operator_commit="auto") -> dict:
@@ -303,12 +332,7 @@ def export(rcon, jcon, sid: str, version: str, account: str = "", out_dir: str =
         return {"ok": False, "error": res["error"]}
     since = res.get("since", "")
     accounts = sorted({t["account"] for t in res["trades"]})
-    root = (spec.get("instrument") or {}).get("root", "").upper()
-    untagged = 0
-    if accounts:
-        for r in journal.query(jcon, "", "", since, 5000):
-            if (r["account"] in accounts and not r.get("strategy") and trades_mod.root(r.get("instrument")) == root):
-                untagged += 1
+    untagged = untagged_count(jcon, res, spec, since)
     aliases = resolve_aliases(accounts + ([account] if account else []), alias_file)
 
     runs = backtest.list_runs(rcon, sid, version)

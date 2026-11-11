@@ -13,7 +13,7 @@ from unittest import mock
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-NEW_MODULES = ["feedback", "readiness", "promote", "approvals"]  # modules that do not exist yet are skipped
+NEW_MODULES = ["feedback", "readiness", "nudges", "promote", "approvals"]  # modules that do not exist yet are skipped
 FORBIDDEN_IMPORTS = ("urllib.request", "http.client", "http.server", "socket", "requests", "launcher", "server")
 
 
