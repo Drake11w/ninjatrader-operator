@@ -909,9 +909,23 @@ namespace NinjaTrader.NinjaScript.AddOns
             return int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n) && n > 0 ? Math.Min(n, 5000) : def;
         }
 
+        private static int QueryRange(HttpListenerContext ctx, string key, int def, int min, int max)
+        {
+            int n;
+            if (!int.TryParse(ctx.Request.QueryString[key], NumberStyles.Integer, CultureInfo.InvariantCulture, out n)) return def;
+            return Math.Max(min, Math.Min(n, max));
+        }
+
         // Read-only historical bars through NinjaTrader's own BarsRequest (the data the Strategy Analyzer uses).
         // GET /history?instrument=MNQ%2012-26&type=Minute&value=1&from=2026-01-01&to=2026-01-31
-        // Bar times are NinjaTrader local time (bar close), "yyyy-MM-ddTHH:mm:ss". Capped at 250000 bars per call.
+        // Bar times are NinjaTrader local time (bar close), "yyyy-MM-ddTHH:mm:ss". Capped at 250000 bars per call (`limit`, up to 500000).
+        // Optional, all read-only query options (a client that sends none gets the old reply plus the new fields):
+        //   price=Last|Bid|Ask   which market data the bars are built from (BarsPeriod.MarketDataType); default Last. Echoed in the reply.
+        //   merge=backadjusted|nonbackadjusted|none   contract merge (default backadjusted, as before). Echoed in the reply.
+        //   offset=N&limit=M     page through a big reply: bars [offset, offset+M) of `total`; `truncated` means more pages remain.
+        //   fmt=tick             Tick bars of value 1 only: rows [time, price, volume] with time "yyyy-MM-ddTHH:mm:ss.fffffff".
+        // For Tick bars NinjaTrader returns the whole trading session that contains `from` (it starts 17:00 the evening before), so a day
+        // can hold millions of ticks: page with offset / limit.
         // NOT yet compiled in NT8: BarsRequest usage is unverified.
         private string BuildHistory(HttpListenerContext ctx, out int code)
         {
@@ -932,11 +946,26 @@ namespace NinjaTrader.NinjaScript.AddOns
             Instrument instrument = Instrument.GetInstrument(inst);
             if (instrument == null) { code = 404; return Err("unknown instrument '" + inst + "'"); }
 
+            string priceName = ctx.Request.QueryString["price"] ?? "Last";
+            MarketDataType mdt;
+            if (!Enum.TryParse(priceName, true, out mdt) || (mdt != MarketDataType.Last && mdt != MarketDataType.Bid && mdt != MarketDataType.Ask))
+            { code = 400; return Err("price must be Last, Bid or Ask"); }
+            string mergeName = (ctx.Request.QueryString["merge"] ?? "backadjusted").ToLowerInvariant();
+            MergePolicy mergePolicy;
+            if (mergeName == "backadjusted") mergePolicy = MergePolicy.MergeBackAdjusted;
+            else if (mergeName == "nonbackadjusted") mergePolicy = MergePolicy.MergeNonBackAdjusted;
+            else if (mergeName == "none") mergePolicy = MergePolicy.DoNotMerge;
+            else { code = 400; return Err("merge must be backadjusted, nonbackadjusted or none"); }
+            bool tickFmt = ctx.Request.QueryString["fmt"] == "tick";
+            if (tickFmt && (bpt != BarsPeriodType.Tick || value != 1)) { code = 400; return Err("fmt=tick needs type=Tick and value=1"); }
+            int offset = QueryRange(ctx, "offset", 0, 0, int.MaxValue);
+            int limit = QueryRange(ctx, "limit", 250000, 1, 500000);
+
             string error = null;
             var done = new ManualResetEvent(false);
             BarsRequest req = new BarsRequest(instrument, from, to);
-            req.BarsPeriod = new BarsPeriod { BarsPeriodType = bpt, Value = value };
-            req.MergePolicy = MergePolicy.MergeBackAdjusted;
+            req.BarsPeriod = new BarsPeriod { BarsPeriodType = bpt, Value = value, MarketDataType = mdt };
+            req.MergePolicy = mergePolicy;
             req.TradingHours = instrument.MasterInstrument.TradingHours;
             try
             {
@@ -948,16 +977,29 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!done.WaitOne(TimeSpan.FromSeconds(90))) { code = 504; return Err("BarsRequest timed out after 90s"); }
                 if (error != null) { code = 502; return Err(error); }
                 var sb = new StringBuilder();
-                int n = req.Bars == null ? 0 : req.Bars.Count;
-                bool truncated = n > 250000;
-                if (truncated) n = 250000;
+                int total = req.Bars == null ? 0 : req.Bars.Count;
+                int first = Math.Min(offset, total);
+                int n = Math.Min(limit, total - first);
+                bool truncated = first + n < total;
                 sb.Append("{\"ok\":true,\"instrument\":").Append(Q(instrument.FullName));
                 sb.Append(",\"type\":").Append(Q(bpt.ToString())).Append(",\"value\":").Append(value.ToString(CultureInfo.InvariantCulture));
+                sb.Append(",\"price\":").Append(Q(mdt.ToString())).Append(",\"merge\":").Append(Q(mergeName));
+                sb.Append(",\"fmt\":").Append(Q(tickFmt ? "tick" : "bar"));
+                sb.Append(",\"total\":").Append(total.ToString(CultureInfo.InvariantCulture));
+                sb.Append(",\"offset\":").Append(first.ToString(CultureInfo.InvariantCulture));
                 sb.Append(",\"count\":").Append(n.ToString(CultureInfo.InvariantCulture));
                 sb.Append(",\"truncated\":").Append(truncated ? "true" : "false").Append(",\"bars\":[");
-                for (int i = 0; i < n; i++)
+                for (int k = 0; k < n; k++)
                 {
-                    if (i > 0) sb.Append(",");
+                    int i = first + k;
+                    if (k > 0) sb.Append(",");
+                    if (tickFmt)
+                    {
+                        sb.Append("[").Append(Q(req.Bars.GetTime(i).ToString("yyyy-MM-ddTHH:mm:ss.fffffff", CultureInfo.InvariantCulture)));
+                        sb.Append(",").Append(NumHi(req.Bars.GetClose(i)));
+                        sb.Append(",").Append(req.Bars.GetVolume(i).ToString(CultureInfo.InvariantCulture)).Append("]");
+                        continue;
+                    }
                     sb.Append("[").Append(Q(req.Bars.GetTime(i).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)));
                     sb.Append(",").Append(NumHi(req.Bars.GetOpen(i))).Append(",").Append(NumHi(req.Bars.GetHigh(i)));
                     sb.Append(",").Append(NumHi(req.Bars.GetLow(i))).Append(",").Append(NumHi(req.Bars.GetClose(i)));
