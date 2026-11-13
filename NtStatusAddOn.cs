@@ -73,6 +73,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             running = false;
             DisarmKill();
+            lock (histLock) { DropHistory(); if (histTimer != null) { histTimer.Dispose(); histTimer = null; } }
             try { if (listener != null) { listener.Stop(); listener.Close(); } } catch { }
             listener = null;
         }
@@ -924,9 +925,37 @@ namespace NinjaTrader.NinjaScript.AddOns
         //   merge=backadjusted|nonbackadjusted|none   contract merge (default backadjusted, as before). Echoed in the reply.
         //   offset=N&limit=M     page through a big reply: bars [offset, offset+M) of `total`; `truncated` means more pages remain.
         //   fmt=tick             Tick bars of value 1 only: rows [time, price, volume] with time "yyyy-MM-ddTHH:mm:ss.fffffff".
+        //   quotes=1             with fmt=tick: rows [time, price, volume, bid, ask], the bid / ask NinjaTrader stored with that tick
+        //                        (Bars.GetBid / GetAsk). Echoed as "quotes":true. UNVERIFIED: not compiled or checked against Bid / Ask series.
         // For Tick bars NinjaTrader returns the whole trading session that contains `from` (it starts 17:00 the evening before), so a day
-        // can hold millions of ticks: page with offset / limit.
-        // NOT yet compiled in NT8: BarsRequest usage is unverified.
+        // can hold millions of ticks: page with offset / limit. The loaded session is kept between the pages of one request (same
+        // instrument / type / value / from / to / price / merge) and released after the last page or HistKeepSeconds without a page, so
+        // a 16-million-tick Bid day is loaded once instead of once per page. The reply says "cached":true when a page reused it.
+        // The Nov 12 version (price / merge / paging / fmt=tick) runs in NT8 and feeds the nightly tick job. The session cache and
+        // quotes=1 are NOT yet compiled in NT8.
+        private const int HistKeepSeconds = 120;
+        private readonly object histLock = new object();
+        private BarsRequest histReq;
+        private string histKey;
+        private DateTime histUsedUtc;
+        private System.Threading.Timer histTimer;
+
+        // Call with histLock held.
+        private void DropHistory()
+        {
+            if (histReq != null) { try { histReq.Dispose(); } catch { } }
+            histReq = null;
+            histKey = null;
+        }
+
+        private void HistoryIdle(object state)
+        {
+            lock (histLock)
+            {
+                if (histReq != null && (DateTime.UtcNow - histUsedUtc).TotalSeconds >= HistKeepSeconds) DropHistory();
+            }
+        }
+
         private string BuildHistory(HttpListenerContext ctx, out int code)
         {
             code = 200;
@@ -960,54 +989,90 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (tickFmt && (bpt != BarsPeriodType.Tick || value != 1)) { code = 400; return Err("fmt=tick needs type=Tick and value=1"); }
             int offset = QueryRange(ctx, "offset", 0, 0, int.MaxValue);
             int limit = QueryRange(ctx, "limit", 250000, 1, 500000);
+            bool quotes = ctx.Request.QueryString["quotes"] == "1";
+            if (quotes && !tickFmt) { code = 400; return Err("quotes=1 needs fmt=tick"); }
 
-            string error = null;
-            var done = new ManualResetEvent(false);
-            BarsRequest req = new BarsRequest(instrument, from, to);
-            req.BarsPeriod = new BarsPeriod { BarsPeriodType = bpt, Value = value, MarketDataType = mdt };
-            req.MergePolicy = mergePolicy;
-            req.TradingHours = instrument.MasterInstrument.TradingHours;
-            try
+            string key = instrument.FullName + "|" + bpt + "|" + value.ToString(CultureInfo.InvariantCulture) + "|" + from.ToString("s", CultureInfo.InvariantCulture)
+                + "|" + to.ToString("s", CultureInfo.InvariantCulture) + "|" + mdt + "|" + mergeName;
+            lock (histLock)
             {
-                req.Request((r, ec, msg) =>
+                bool cached = histReq != null && histKey == key;
+                if (!cached)
                 {
-                    if (ec != ErrorCode.NoError) error = ec + ": " + msg;
-                    done.Set();
-                });
-                if (!done.WaitOne(TimeSpan.FromSeconds(90))) { code = 504; return Err("BarsRequest timed out after 90s"); }
-                if (error != null) { code = 502; return Err(error); }
-                var sb = new StringBuilder();
-                int total = req.Bars == null ? 0 : req.Bars.Count;
-                int first = Math.Min(offset, total);
-                int n = Math.Min(limit, total - first);
-                bool truncated = first + n < total;
-                sb.Append("{\"ok\":true,\"instrument\":").Append(Q(instrument.FullName));
-                sb.Append(",\"type\":").Append(Q(bpt.ToString())).Append(",\"value\":").Append(value.ToString(CultureInfo.InvariantCulture));
-                sb.Append(",\"price\":").Append(Q(mdt.ToString())).Append(",\"merge\":").Append(Q(mergeName));
-                sb.Append(",\"fmt\":").Append(Q(tickFmt ? "tick" : "bar"));
-                sb.Append(",\"total\":").Append(total.ToString(CultureInfo.InvariantCulture));
-                sb.Append(",\"offset\":").Append(first.ToString(CultureInfo.InvariantCulture));
-                sb.Append(",\"count\":").Append(n.ToString(CultureInfo.InvariantCulture));
-                sb.Append(",\"truncated\":").Append(truncated ? "true" : "false").Append(",\"bars\":[");
-                for (int k = 0; k < n; k++)
-                {
-                    int i = first + k;
-                    if (k > 0) sb.Append(",");
-                    if (tickFmt)
+                    DropHistory();
+                    string error = null;
+                    var done = new ManualResetEvent(false);
+                    BarsRequest fresh = new BarsRequest(instrument, from, to);
+                    fresh.BarsPeriod = new BarsPeriod { BarsPeriodType = bpt, Value = value, MarketDataType = mdt };
+                    fresh.MergePolicy = mergePolicy;
+                    fresh.TradingHours = instrument.MasterInstrument.TradingHours;
+                    bool loaded = false;
+                    try
                     {
-                        sb.Append("[").Append(Q(req.Bars.GetTime(i).ToString("yyyy-MM-ddTHH:mm:ss.fffffff", CultureInfo.InvariantCulture)));
-                        sb.Append(",").Append(NumHi(req.Bars.GetClose(i)));
-                        sb.Append(",").Append(req.Bars.GetVolume(i).ToString(CultureInfo.InvariantCulture)).Append("]");
-                        continue;
+                        fresh.Request((r, ec, msg) =>
+                        {
+                            if (ec != ErrorCode.NoError) error = ec + ": " + msg;
+                            done.Set();
+                        });
+                        if (!done.WaitOne(TimeSpan.FromSeconds(90))) { code = 504; return Err("BarsRequest timed out after 90s"); }
+                        if (error != null) { code = 502; return Err(error); }
+                        loaded = true;
                     }
-                    sb.Append("[").Append(Q(req.Bars.GetTime(i).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)));
-                    sb.Append(",").Append(NumHi(req.Bars.GetOpen(i))).Append(",").Append(NumHi(req.Bars.GetHigh(i)));
-                    sb.Append(",").Append(NumHi(req.Bars.GetLow(i))).Append(",").Append(NumHi(req.Bars.GetClose(i)));
-                    sb.Append(",").Append(req.Bars.GetVolume(i).ToString(CultureInfo.InvariantCulture)).Append("]");
+                    finally { if (!loaded) fresh.Dispose(); }
+                    histReq = fresh;
+                    histKey = key;
                 }
-                return sb.Append("]}").ToString();
+                BarsRequest req = histReq;
+                bool keep = false;
+                try
+                {
+                    var sb = new StringBuilder();
+                    int total = req.Bars == null ? 0 : req.Bars.Count;
+                    int first = Math.Min(offset, total);
+                    int n = Math.Min(limit, total - first);
+                    bool truncated = first + n < total;
+                    sb.Append("{\"ok\":true,\"instrument\":").Append(Q(instrument.FullName));
+                    sb.Append(",\"type\":").Append(Q(bpt.ToString())).Append(",\"value\":").Append(value.ToString(CultureInfo.InvariantCulture));
+                    sb.Append(",\"price\":").Append(Q(mdt.ToString())).Append(",\"merge\":").Append(Q(mergeName));
+                    sb.Append(",\"fmt\":").Append(Q(tickFmt ? "tick" : "bar"));
+                    if (quotes) sb.Append(",\"quotes\":true");
+                    sb.Append(",\"cached\":").Append(cached ? "true" : "false");
+                    sb.Append(",\"total\":").Append(total.ToString(CultureInfo.InvariantCulture));
+                    sb.Append(",\"offset\":").Append(first.ToString(CultureInfo.InvariantCulture));
+                    sb.Append(",\"count\":").Append(n.ToString(CultureInfo.InvariantCulture));
+                    sb.Append(",\"truncated\":").Append(truncated ? "true" : "false").Append(",\"bars\":[");
+                    for (int k = 0; k < n; k++)
+                    {
+                        int i = first + k;
+                        if (k > 0) sb.Append(",");
+                        if (tickFmt)
+                        {
+                            sb.Append("[").Append(Q(req.Bars.GetTime(i).ToString("yyyy-MM-ddTHH:mm:ss.fffffff", CultureInfo.InvariantCulture)));
+                            sb.Append(",").Append(NumHi(req.Bars.GetClose(i)));
+                            sb.Append(",").Append(req.Bars.GetVolume(i).ToString(CultureInfo.InvariantCulture));
+                            if (quotes) sb.Append(",").Append(NumHi(req.Bars.GetBid(i))).Append(",").Append(NumHi(req.Bars.GetAsk(i)));
+                            sb.Append("]");
+                            continue;
+                        }
+                        sb.Append("[").Append(Q(req.Bars.GetTime(i).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)));
+                        sb.Append(",").Append(NumHi(req.Bars.GetOpen(i))).Append(",").Append(NumHi(req.Bars.GetHigh(i)));
+                        sb.Append(",").Append(NumHi(req.Bars.GetLow(i))).Append(",").Append(NumHi(req.Bars.GetClose(i)));
+                        sb.Append(",").Append(req.Bars.GetVolume(i).ToString(CultureInfo.InvariantCulture)).Append("]");
+                    }
+                    keep = truncated;                              // more pages to come: keep the loaded session for them
+                    return sb.Append("]}").ToString();
+                }
+                finally
+                {
+                    if (keep)
+                    {
+                        histUsedUtc = DateTime.UtcNow;
+                        if (histTimer == null) histTimer = new System.Threading.Timer(HistoryIdle, null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+                        histTimer.Change((HistKeepSeconds + 1) * 1000, System.Threading.Timeout.Infinite);
+                    }
+                    else DropHistory();
+                }
             }
-            finally { req.Dispose(); }
         }
 
         private static string Ts(DateTime t)

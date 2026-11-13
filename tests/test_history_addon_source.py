@@ -46,6 +46,25 @@ class HistoryAddOnSourceTest(unittest.TestCase):
         self.assertIn('"offset", 0, 0', body)
         self.assertIn('"limit", 250000, 1, 500000', body)
 
+    def test_loaded_session_is_kept_between_pages_and_always_released(self):
+        body = method_body("BuildHistory")
+        self.assertIn("histKey == key", body)                                   # a page of the same request reuses the loaded bars
+        for part in ("instrument.FullName", "bpt", "from.ToString", "to.ToString", "mdt", "mergeName"):
+            self.assertIn(part, body[body.index("string key ="):body.index("lock (histLock)")], part)
+        self.assertIn("keep = truncated", body)                                 # kept only while more pages remain
+        self.assertIn("else DropHistory();", body)                              # last page (or an exception) releases it at once
+        self.assertIn("if (!loaded) fresh.Dispose();", body)                    # a failed / timed-out load is never cached
+        self.assertIn("histTimer.Change((HistKeepSeconds + 1) * 1000", body)    # an abandoned request is released by the idle timer
+        self.assertIn("lock (histLock) { DropHistory();", SRC[SRC.index("private void Stop()"):SRC.index("private void Loop()")])
+        self.assertIn('\\"cached\\"', body)
+
+    def test_quotes_option_is_opt_in(self):
+        body = method_body("BuildHistory")
+        self.assertIn('QueryString["quotes"] == "1"', body)
+        self.assertIn("if (quotes) sb.Append", body)
+        self.assertIn("GetBid(i)", body)
+        self.assertIn("GetAsk(i)", body)
+
 
 if __name__ == "__main__":
     unittest.main()
