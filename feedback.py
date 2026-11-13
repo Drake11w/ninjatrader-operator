@@ -341,7 +341,8 @@ def export(rcon, jcon, sid: str, version: str, account: str = "", out_dir: str =
         "trades_json") else []
     perf = trades_mod.performance(res["trades"], spec.get("timezone", "America/Chicago")) if res["trades"] \
         else {"trades": 0}
-    compare = comparison.compare(perf, res.get("backtest") or {}, res["trades"], ref_durations)
+    compare = comparison.compare(perf, res.get("backtest") or {}, res["trades"], ref_durations,
+                                 comparison.sessions_since(since, as_of))
 
     files = build_files(spec, row["status"], since, now_iso, res, run, aliases, untagged, compare)
     base = os.path.join(out_dir or feedback_dir(), lucid_id, version)

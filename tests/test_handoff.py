@@ -46,6 +46,17 @@ def make_bundle(root, approved=True, tamper=False):
     return d, spec
 
 
+def list_spec(d):
+    """Add the exporter's MANIFEST.bundle_files entry for spec.json (its sha256 as written)."""
+    mp = os.path.join(d, "MANIFEST.json")
+    with open(mp, encoding="utf-8") as f:
+        m = json.load(f)
+    with open(os.path.join(d, "spec.json"), "rb") as f:
+        m["bundle_files"] = {"spec.json": {"sha256": hashlib.sha256(f.read()).hexdigest()}}
+    with open(mp, "w", encoding="utf-8") as f:
+        json.dump(m, f)
+
+
 class InspectInstallTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -53,6 +64,39 @@ class InspectInstallTests(unittest.TestCase):
         os.environ["NT_HOME"] = os.path.join(self.tmp.name, "nt")
         os.environ["NT_REGISTRY_DB"] = os.path.join(self.tmp.name, "reg.sqlite")
         self.addCleanup(lambda: [os.environ.pop(k, None) for k in ("NT_HOME", "NT_REGISTRY_DB")])
+
+    def test_spec_edited_after_export_is_refused(self):
+        d, spec = make_bundle(self.tmp.name)
+        list_spec(d)
+        self.assertTrue(handoff.inspect_bundle(d)["ok"])
+        spec["legs"][0]["sizing"]["contracts"] = 1 + spec["legs"][0]["sizing"]["contracts"]   # still a valid spec
+        spec["legs"][0]["sizing"]["max_contracts"] = spec["legs"][0]["sizing"]["contracts"]
+        with open(os.path.join(d, "spec.json"), "w", encoding="utf-8") as f:
+            json.dump(spec, f)
+        r = handoff.inspect_bundle(d)
+        self.assertFalse(r["ok"])
+        self.assertTrue(any("spec.json: sha256 differs" in e for e in r["errors"]), r["errors"])
+
+    def test_bundle_without_spec_hash_warns(self):
+        d, _ = make_bundle(self.tmp.name)
+        r = handoff.inspect_bundle(d)
+        self.assertTrue(r["ok"])
+        self.assertTrue(any("bundle_files" in w for w in r["warnings"]))
+
+    def test_bundle_file_outside_the_bundle_is_refused(self):
+        d, _ = make_bundle(self.tmp.name)
+        list_spec(d)
+        mp = os.path.join(d, "MANIFEST.json")
+        with open(mp, encoding="utf-8") as f:
+            m = json.load(f)
+        m["bundle_files"]["../elsewhere.txt"] = {"sha256": "0" * 64}
+        with open(mp, "w", encoding="utf-8") as f:
+            json.dump(m, f)
+        self.assertTrue(any("outside the bundle" in e for e in handoff.inspect_bundle(d)["errors"]))
+
+    def test_truthy_string_is_not_an_approval(self):
+        d, _ = make_bundle(self.tmp.name, approved="yes")
+        self.assertTrue(any("handoff_approved" in e for e in handoff.inspect_bundle(d)["errors"]))
 
     def test_good_bundle_dry_run_writes_nothing(self):
         d, _ = make_bundle(self.tmp.name)

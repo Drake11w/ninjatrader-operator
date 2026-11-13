@@ -1,6 +1,6 @@
 {
   "as_of": "2026-10-30T12:00:00Z",
-  "content_sha256": "090d4183b219f571b609c6b32082ab8640d983f6d354c80586c47d9a39a696fb",
+  "content_sha256": "dc0997017d82f68157b95ac8f1c34c830f7bc2c9bb611f4ab15de67771c81af3",
   "files": {
     "backtest_check.json": {
       "bytes": 826,
@@ -11,8 +11,8 @@
       "sha256": "b63c5f12a8835e3ad5a8550db1b46ce3f43051ab7abbb9f8672e27f266ca5e21"
     },
     "drift.json": {
-      "bytes": 1432,
-      "sha256": "9de607d35405b480c887cf42f588429df2f56b9f39ad333a5ba6f5d5e0b44a76"
+      "bytes": 1434,
+      "sha256": "885fa51079a302b4f218e76107710377f8c4e9a30a3889078dacdaa39af20f19"
     },
     "summary.json": {
       "bytes": 661,
@@ -23,8 +23,8 @@
       "sha256": "3947b49c81ba1931742a1d7187e5c9f366a64bb4526d62102d3d3da1f3a70fdc"
     },
     "verdict.json": {
-      "bytes": 5107,
-      "sha256": "0bd32ab36c68eb3f277a68d1cb1a93df0797b48fe579eb956d76c423dbc61a0f"
+      "bytes": 5135,
+      "sha256": "0d2bdb88393967631452be4c2091521e5a8cab9f9d81c6663f33b962a8364e19"
     }
   },
   "handoff": {

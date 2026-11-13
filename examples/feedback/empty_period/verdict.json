@@ -136,11 +136,11 @@
         "threshold": null
       },
       {
-        "actual": null,
+        "actual": 0.0,
         "key": "trade_frequency",
-        "note": "need 5 trading days to estimate a pace",
-        "progress": "0/5 days",
-        "status": "pending",
+        "note": "x the claimed 252 trades/year (0 trades in 44 sessions)",
+        "progress": null,
+        "status": "fail",
         "threshold": [
           0.5,
           1.5
@@ -159,7 +159,7 @@
     "ready": false,
     "state": "not_ready",
     "suggested_action": null,
-    "summary": "not ready: sample_trades 0/30, sample_days 0/20, verdict, no_edge_decay, expectancy_vs_claim, trade_frequency 0/5 days"
+    "summary": "not ready: sample_trades 0/30, sample_days 0/20, verdict, no_edge_decay, expectancy_vs_claim, trade_frequency"
   },
   "reasons": [
     "sample_trades: 0/30",

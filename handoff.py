@@ -49,10 +49,25 @@ def inspect_bundle(path: str) -> dict:
 
     errors += [f"spec: {e}" for e in strategy_spec.validate(spec)]
     approval = manifest.get("approval") or {}
-    if not approval.get("handoff_approved"):
+    if approval.get("handoff_approved") is not True:  # the exporter's own rule: a truthy string is not an approval
         errors.append("MANIFEST.approval.handoff_approved is not true: refusing an unapproved bundle")
     if manifest.get("spec_id") != spec.get("id") or manifest.get("spec_version") != spec.get("version"):
         errors.append("MANIFEST spec_id/spec_version do not match spec.json")
+    # spec.json holds the inputs the strategy will run with, so it gets the same tamper check as the .cs files.
+    # Bundles from before the exporter wrote bundle_files have nothing to check against: a warning, not a refusal.
+    listed = manifest.get("bundle_files")
+    if not isinstance(listed, dict) or "spec.json" not in listed:
+        warnings.append("MANIFEST.bundle_files has no sha256 for spec.json: the spec cannot be checked for edits "
+                        "after export")
+    for rel, ent in (listed.items() if isinstance(listed, dict) else ()):
+        p = os.path.normpath(os.path.join(path, rel))
+        if os.path.isabs(rel) or not p.startswith(os.path.normpath(path) + os.sep):
+            errors.append(f"{rel}: MANIFEST.bundle_files entry points outside the bundle")
+        elif not os.path.isfile(p):
+            errors.append(f"{rel}: listed in MANIFEST.bundle_files but missing")
+        elif sha256(p) != (ent or {}).get("sha256"):
+            errors.append(f"{rel}: sha256 differs from MANIFEST (edited after export? bundles are never hand-edited; "
+                          f"export a new version)")
     if approval.get("limits"):
         warnings.append("approval limits: " + approval["limits"])
     if spec.get("evidence_status"):

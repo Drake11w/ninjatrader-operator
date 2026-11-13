@@ -6,6 +6,8 @@ pending with progress, so an unready version always says why. This module never 
 """
 from datetime import datetime
 
+import sessions
+
 # Global floors. A spec may only make these stricter (see thresholds()).
 DEFAULTS = {"min_trades": 30, "min_days": 20, "min_weeks": 4, "freq_low": 0.5, "freq_high": 1.5}
 STRICTER = {"min_trades": max, "min_days": max, "min_weeks": max, "freq_low": max, "freq_high": min}
@@ -69,9 +71,10 @@ def evaluate(verdict_result: dict, status: str, since: str, now: str, backtest: 
 
     out.append(_floor("sample_trades", n, th["min_trades"]))
     out.append(_floor("sample_days", days, th["min_days"]))
-    weeks = 0
+    weeks = elapsed = 0
     if since:
         weeks = max(0, (_parse(now) - _parse(since)).days // 7)
+        elapsed = sessions.elapsed_sessions(_parse(since), _parse(now))
     out.append(_floor("sample_weeks", weeks, th["min_weeks"]))
 
     hard_fail = any(c["status"] == "fail" and not c["check"].startswith(("sample_",)) for c in checks.values())
@@ -102,14 +105,17 @@ def evaluate(verdict_result: dict, status: str, since: str, now: str, backtest: 
     if not claimed:
         out.append(_c("trade_frequency", "pending", None, [th["freq_low"], th["freq_high"]],
                       note="no claimed trades per year to compare"))
-    elif days < 5:
+    elif elapsed < th["min_days"]:
         out.append(_c("trade_frequency", "pending", None, [th["freq_low"], th["freq_high"]],
-                      progress=f"{days}/5 days", note="need 5 trading days to estimate a pace"))
+                      progress=f"{elapsed}/{th['min_days']} sessions",
+                      note=f"need {th['min_days']} finished sessions since Sim start to estimate a pace"))
     else:
-        ratio = round(n / days * 252 / claimed, 2)
+        # Pace over every finished session since Sim start, traded or not. Dividing by the days that had a trade
+        # reads 252/year for anything that trades at most once a day, however many days it skips.
+        ratio = round(n / elapsed * 252 / claimed, 2)
         ok = th["freq_low"] <= ratio <= th["freq_high"]
         out.append(_c("trade_frequency", "pass" if ok else "fail", ratio, [th["freq_low"], th["freq_high"]],
-                      note=f"x the claimed {claimed:g} trades/year"))
+                      note=f"x the claimed {claimed:g} trades/year ({n} trades in {elapsed} sessions)"))
 
     out.append(_c("untagged_fills", "pass" if untagged_fills == 0 else "fail", untagged_fills, 0))
 

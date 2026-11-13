@@ -92,7 +92,7 @@ a list of `{key, status, actual, threshold, progress, note}` with `status` `pass
 | `verdict` | the verdict engine says `promote` |
 | `no_edge_decay` | no edge-decay flag over all Sim trades or the last 20 |
 | `expectancy_vs_claim` | Sim expectancy is at least 40% of the backtest's |
-| `trade_frequency` | Sim trades per year (trades / days x 252) is 0.5x to 1.5x the claimed pace |
+| `trade_frequency` | Sim trades per year (trades / finished sessions since Sim start x 252, sessions without a trade included) is 0.5x to 1.5x the claimed pace; `pending` until 20 sessions have finished |
 | `untagged_fills` | zero fills in the period on the version's accounts, in its instrument, without a strategy tag |
 
 A spec's `readiness_overrides` may only make floors stricter (higher floors, a narrower frequency band); looser values are

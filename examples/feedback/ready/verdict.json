@@ -202,9 +202,9 @@
         "threshold": ">=0.4 of $40.00 (backtest)"
       },
       {
-        "actual": 1.0,
+        "actual": 0.82,
         "key": "trade_frequency",
-        "note": "x the claimed 252 trades/year",
+        "note": "x the claimed 252 trades/year (36 trades in 44 sessions)",
         "progress": null,
         "status": "pass",
         "threshold": [

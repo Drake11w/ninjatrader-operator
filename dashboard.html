@@ -63,7 +63,7 @@ function strat(s){
     ${cmp('Win rate',pct(p.win_rate),ex.win_rate?pct(ex.win_rate.value)+' <span class=sub>'+ex.win_rate.source+'</span>':'–')}
     ${cmp('Profit factor',num(p.profit_factor),ex.profit_factor?num(ex.profit_factor.value):'–')}
     ${cmp('Max drawdown',money(p.max_drawdown),bt&&bt.max_drawdown!=null?money(bt.max_drawdown):'–')}
-    ${cmp('Trades / year',p.trading_days>5?num(p.trades/p.trading_days*252,0):'–',ex.trades_per_year?num(ex.trades_per_year.value,0):'–')}</table>`;
+    ${cmp('Trades / year',s.sessions_elapsed>=5?num(p.trades/s.sessions_elapsed*252,0):'–',ex.trades_per_year?num(ex.trades_per_year.value,0):'–')}</table>`;
   const legs=s.legs.map(l=>`<tr><td>${esc(l.name)}</td><td>${esc(l.side||'')} ${l.contracts?'×'+l.contracts:''}</td><td>${l.session?esc(l.session.entry_start+'–'+l.session.flat_by):''} ${l.days?esc(l.days.join(',')):''}</td>
     <td>${l.nt?esc(l.nt.state)+(l.nt.quantity?` · ${esc(l.nt.position)} ${l.nt.quantity}`:' · flat'):'<span class=sub>not in NT</span>'}</td><td>${l.trades}</td><td class="${cls(l.net_pnl)}">${money(l.net_pnl)}</td></tr>`).join('');
   const checks=(v.checks||[]).map(c=>`<tr><td>${esc(c.check)}</td><td><span class="pill ${c.status=='pass'?'ok':c.status=='fail'?'bad':c.status=='warn'?'warn':''}">${esc(c.status)}</span></td><td>${esc(c.actual)}</td><td>${esc(c.threshold)}</td><td class=sub>${esc(c.note)}</td></tr>`).join('');

@@ -103,6 +103,25 @@ def special_session(d: date, extra=()) -> str:
     return special_sessions(d.year).get(d, "")
 
 
+def elapsed_sessions(since: datetime, now: datetime, tz: str = "America/Chicago", extra=()) -> int:
+    """Finished regular sessions from `since` to `now`: weekdays (local dates in `tz`) from the day of `since` up to,
+    but not including, the day of `now`, minus full closures (special_session '(closed)' and `extra`). Halt days and
+    early closes count. This is the denominator for a trade pace: a strategy that skips days still has those days
+    in its backtest's trades-per-year, so dividing by the days it happened to trade overstates the pace."""
+    try:
+        from zoneinfo import ZoneInfo
+        zone = ZoneInfo(tz)
+        d, end = since.astimezone(zone).date(), now.astimezone(zone).date()
+    except Exception:  # no tz database: UTC dates are at most one day off
+        d, end = since.date(), now.date()
+    n = 0
+    while d < end:
+        if d.weekday() < 5 and "(closed)" not in special_session(d) and d.isoformat() not in extra:
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
 def _at(d: date, t: time, tz) -> datetime:
     return datetime.combine(d, t, tzinfo=tz)
 
