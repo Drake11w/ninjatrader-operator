@@ -55,9 +55,22 @@ class CompareTests(unittest.TestCase):
         r = comparison.compare(perf(), BT, [{"duration_sec": 3000}] * 20, [600] * 30)
         self.assertEqual(row(r, "avg_duration_min")["flag"], "shift")
 
-    def test_pace_needs_enough_days(self):
-        r = comparison.compare(perf(trading_days=3), BT, [], [])
-        self.assertIsNone(row(r, "trades_per_year")["sim"])
+    def test_pace_needs_enough_sessions(self):
+        self.assertIsNone(row(comparison.compare(perf(), BT, [], []), "trades_per_year")["sim"])
+        self.assertIsNone(row(comparison.compare(perf(), BT, [], [], 3), "trades_per_year")["sim"])
+
+    def test_pace_counts_sessions_without_a_trade(self):
+        # 20 trades on 20 different days out of 42 sessions is about 120 a year, not 252
+        bt = dict(BT, trades_per_year=119.2)
+        r = comparison.compare(perf(n=20, trading_days=20), bt, [], [], 42)
+        self.assertEqual(row(r, "trades_per_year")["sim"], 120.0)
+        self.assertEqual(row(r, "trades_per_year")["flag"], "ok")
+
+    def test_sessions_since(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 11, 13, 18, 0, tzinfo=timezone.utc)                    # Friday
+        self.assertEqual(comparison.sessions_since("", now), 0)
+        self.assertEqual(comparison.sessions_since("2026-11-09T14:00:00Z", now), 4)  # Mon-Thu finished
 
 
 if __name__ == "__main__":

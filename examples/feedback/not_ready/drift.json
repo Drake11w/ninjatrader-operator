@@ -50,11 +50,11 @@
     },
     {
       "backtest": 252.0,
-      "difference": 0.0,
+      "difference": -45.8,
       "flag": "ok",
       "label": "Trades / year",
       "metric": "trades_per_year",
-      "sim": 252.0
+      "sim": 206.2
     },
     {
       "backtest": 30.0,

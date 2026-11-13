@@ -280,6 +280,20 @@ class ReadinessUnit(unittest.TestCase):
         r = self.ev(self.v(expected={"trades_per_year": {"value": 60}}))
         self.assertEqual([c for c in r["criteria"] if c["key"] == "trade_frequency"][0]["status"], "fail")
 
+    def freq(self, r):
+        return [c for c in r["criteria"] if c["key"] == "trade_frequency"][0]
+
+    def test_frequency_counts_sessions_without_a_trade(self):
+        # A strategy that trades about every second session (claim 119/year): 20 trades on 20 days in 43 sessions.
+        # Dividing by the 20 traded days read 252/year, 2.1x the claim, so it could never become ready.
+        v = self.v(sample={"trades": 20, "trading_days": 20}, expected={"trades_per_year": {"value": 119.2}})
+        c = self.freq(self.ev(v))
+        self.assertEqual((c["status"], c["actual"]), ("pass", 0.98))
+
+    def test_frequency_pending_until_enough_sessions(self):
+        c = self.freq(self.ev(since="2026-09-21T12:00:00Z"))            # Sep 21-29: `now` is still Sep 30 in Chicago
+        self.assertEqual((c["status"], c["progress"]), ("pending", "7/20 sessions"))
+
     def test_reject_is_a_suggestion_only(self):
         r = self.ev(self.v(verdict="reject", reasons=["drawdown"]))
         self.assertEqual(r["state"], "rejected")

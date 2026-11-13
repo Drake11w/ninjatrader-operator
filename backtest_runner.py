@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
@@ -52,6 +53,8 @@ def _call(path: str, params: dict = None, body: str = None) -> dict:
             return json.load(r)
     except urllib.error.HTTPError as e:
         return {"ok": False, "error": f"HTTP {e.code}: {e.read().decode(errors='replace')[:300]}"}
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:  # add-on down or NinjaTrader closed mid-run
+        return {"ok": False, "error": f"NinjaTrader add-on unreachable or bad reply: {e}"}
 
 
 def _body(inputs: dict) -> str:
@@ -200,7 +203,8 @@ def main(argv=None):
         import registry
         con = registry.connect()
         try:
-            res = backtest.import_run(con, spec, text, label="NinjaTrader Analyzer, per-contract stitched", source_name=path)
+            label = "NinjaTrader Analyzer, " + ("per-contract stitched" if a.stitch else f"one merged run on {wins[0]['instrument']}")
+            res = backtest.import_run(con, spec, text, label=label, source_name=path)
         finally:
             con.close()
         summary["import"] = {k: res.get(k) for k in ("ok", "run_id", "error", "warnings")}

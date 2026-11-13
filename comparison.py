@@ -13,9 +13,11 @@ add-on does not expose.
 """
 import json
 import statistics
+from datetime import datetime, timezone
 
 import backtest
 import registry
+import sessions
 import trades as trades_mod
 import verdict
 
@@ -49,15 +51,23 @@ def _flag(key, bt, sim, enough):
     return "better" if (diff > 0) == higher else "worse"
 
 
-def compare(sim_perf: dict, bt: dict, sim_trades: list, ref_durations: list = None) -> dict:
+def sessions_since(since: str, now: datetime = None) -> int:
+    """Finished regular sessions since the ISO time `since` (0 when it never entered Sim)."""
+    if not since:
+        return 0
+    return sessions.elapsed_sessions(trades_mod._parse(since), now or datetime.now(timezone.utc))
+
+
+def compare(sim_perf: dict, bt: dict, sim_trades: list, ref_durations: list = None, sessions_elapsed: int = 0) -> dict:
     """sim_perf: trades.performance() of the sim trades since activation; bt: the backtest's metrics dict;
-    sim_trades: those trades; ref_durations: the backtest's per-trade holding times in seconds (or None)."""
+    sim_trades: those trades; ref_durations: the backtest's per-trade holding times in seconds (or None);
+    sessions_elapsed: finished sessions since activation (sessions_since), traded or not: the pace denominator.
+    Without it (or under 5) the pace row is n/a, never a guess from the days that happened to have a trade."""
     bt = bt or {}
     n = sim_perf.get("trades") or 0
     enough = n >= MIN_SIM_TRADES
-    days = sim_perf.get("trading_days") or 0
     sim = {k: sim_perf.get(k) for k in ("expectancy", "win_rate", "profit_factor", "avg_win", "avg_loss")}
-    sim["trades_per_year"] = round(n / days * 252, 1) if days >= 5 else None
+    sim["trades_per_year"] = round(n / sessions_elapsed * 252, 1) if sessions_elapsed >= 5 else None
     durs = [t["duration_sec"] for t in sim_trades if t.get("duration_sec") is not None]
     sim["avg_duration_min"] = round(statistics.median(durs) / 60, 1) if durs else None
     ref = [d for d in (ref_durations or []) if d is not None]
@@ -92,7 +102,7 @@ def for_strategy(rcon, jcon, sid: str, version: str, account: str = "") -> dict:
         full = backtest.get_run(rcon, runs[0]["run_id"])
         if full and full.get("trades_json"):
             ref = [t.get("duration_sec") for t in json.loads(full["trades_json"])]
-    out = compare(perf, res.get("backtest") or {}, ts, ref)
+    out = compare(perf, res.get("backtest") or {}, ts, ref, sessions_since(res.get("since")))
     out.update(id=sid, version=version, status=res.get("status"), since=res.get("since"),
                backtest_run=(res.get("backtest") or {}).get("run_id"))
     return out

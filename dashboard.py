@@ -117,7 +117,8 @@ def _strategy(rcon, jcon, spec_row: dict, nt: dict, account: str, now: datetime)
     appr = registry.get_approval(rcon, sid, ver)
     recorded = verdict.history(rcon, sid, ver, 10)
     bt = res.get("backtest") or {}
-    cmp_rows = comparison.compare(perf, bt, ts, _ref_durations(rcon, sid, ver)) if bt or ts else None
+    elapsed = comparison.sessions_since(res.get("since"), now)
+    cmp_rows = comparison.compare(perf, bt, ts, _ref_durations(rcon, sid, ver), elapsed) if bt or ts else None
     return {
         "id": sid, "version": ver, "name": spec.get("name") or sid, "lucid_id": spec.get("lucid_id"),
         "hypothesis": spec.get("hypothesis"), "status": status, "status_since": cur.get("at"),
@@ -130,6 +131,7 @@ def _strategy(rcon, jcon, spec_row: dict, nt: dict, account: str, now: datetime)
         "performance": {k: perf.get(k) for k in ("trades", "net_pnl", "win_rate", "expectancy", "profit_factor",
                                                  "avg_win", "avg_loss", "max_drawdown", "best_day", "worst_day",
                                                  "trading_days", "avg_duration_sec", "sharpe")},
+        "sessions_elapsed": elapsed,
         "pnl_today": round(pnl_today, 2), "last_trade": last_trade, "equity": eq,
         "backtest": {k: bt.get(k) for k in ("run_id", "label", "start", "end", "net_per_year", "trades_per_year",
                                            "expectancy", "win_rate", "max_drawdown", "net_pnl", "trades")} if bt else None,
