@@ -112,5 +112,30 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(len(d["strategies"]), 1)
 
 
+class AuthTests(unittest.TestCase):
+    T = "x" * 20
+
+    def test_local_client_only(self):
+        for a in ("127.0.0.1", "::1", "192.168.1.50", "10.0.0.7", "172.16.4.2", "169.254.1.1", "::ffff:192.168.0.9"):
+            self.assertTrue(dashboard._local_client(a), a)
+        for a in ("8.8.8.8", "93.184.216.34", "2606:4700::1111", "not-an-ip"):
+            self.assertFalse(dashboard._local_client(a), a)
+
+    def test_no_token_means_open_loopback_mode(self):
+        self.assertEqual(dashboard._authorized({}, "", token=""), (True, False))
+
+    def test_rejects_missing_or_wrong_token(self):
+        self.assertEqual(dashboard._authorized({}, "", token=self.T), (False, False))
+        self.assertEqual(dashboard._authorized({}, "token=nope", token=self.T), (False, False))
+        self.assertEqual(dashboard._authorized({"Cookie": "nt_dash=nope"}, "", token=self.T), (False, False))
+
+    def test_query_token_ok_and_asks_for_cookie(self):
+        self.assertEqual(dashboard._authorized({}, f"token={self.T}", token=self.T), (True, True))
+
+    def test_cookie_and_bearer_ok(self):
+        self.assertEqual(dashboard._authorized({"Cookie": f"a=b; nt_dash={self.T}"}, "", token=self.T), (True, False))
+        self.assertEqual(dashboard._authorized({"Authorization": f"Bearer {self.T}"}, "", token=self.T), (True, False))
+
+
 if __name__ == "__main__":
     unittest.main()
