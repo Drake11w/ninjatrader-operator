@@ -30,6 +30,7 @@ def payloads():
         "/strategies": {"timestamp": ts, "strategies": [{"account": "Sim101", "name": "ORB", "state": "Realtime"}]},
         "/health": {"ok": True, "timestamp": ts, "uptime_seconds": 5, "connections": [
             {"account": "Sim101", "status": "Connected", "price_status": "Disconnected"}]},
+        "/recovery": {"enabled": False, "last_event": "not started", "pending": []},
     }
 
 
@@ -171,6 +172,11 @@ class ServerTests(unittest.TestCase):
 
     def test_health_flags_bad_feed(self):
         self.assertIn("Sim101", json.loads(self.s.get_health())["warning"])
+
+    def test_recovery_status(self):
+        status = json.loads(self.s.get_recovery_status())
+        self.assertFalse(status["enabled"])
+        self.assertEqual(status["pending"], [])
 
     def test_stale_warning(self):
         state["ts"] = OLD
